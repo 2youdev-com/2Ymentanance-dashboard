@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
