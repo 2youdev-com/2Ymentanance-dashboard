@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      const res = await api.post('/auth/login', { username, password })
+      const res = await api.post('/auth/login', { username: username.trim(), password: password.trim() })
       const { token, user } = res.data.data
       localStorage.setItem('loc_token', token)
       setAuth(token, user)
@@ -36,7 +36,6 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
         <div className="mb-8 flex flex-col items-center gap-2 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
             <Building2 className="h-7 w-7" />
@@ -86,7 +85,6 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            {/* Demo credentials */}
             <div className="mt-4 rounded-md bg-muted p-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground">Demo credentials</p>
               <div className="space-y-1 text-xs text-muted-foreground">
