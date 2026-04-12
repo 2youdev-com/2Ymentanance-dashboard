@@ -7,11 +7,9 @@ import { useSiteStore } from '@/store'
 import { Asset } from '@/types'
 import api from '@/lib/api'
 
-declare global {
-  interface Window {
-    Cesium: typeof import('cesium')
-  }
-}
+// Cesium is loaded via CDN — no npm package needed
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CesiumType = any
 
 const STATUS_COLORS = {
   OPERATIONAL: '#22c55e',
@@ -19,13 +17,13 @@ const STATUS_COLORS = {
   OUT_OF_SERVICE: '#ef4444',
 }
 
-// Approximate coordinates for Bank Tower Riyadh
-const TOWER_CENTER = { lon: 46.6753, lat: 24.6896, height: 0 }
-const NRR_CENTER = { lon: 46.6800, lat: 24.6920, height: 0 }
+const TOWER_CENTER = { lon: 46.6753, lat: 24.6896 }
+const NRR_CENTER   = { lon: 46.6800, lat: 24.6920 }
 
 export default function MapPage() {
   const cesiumContainer = useRef<HTMLDivElement>(null)
-  const viewerRef = useRef<unknown>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const viewerRef = useRef<any>(null)
   const { selectedSiteId } = useSiteStore()
   const navigate = useNavigate()
   const [assets, setAssets] = useState<Asset[]>([])
@@ -41,7 +39,8 @@ export default function MapPage() {
 
   // Load CesiumJS from CDN
   useEffect(() => {
-    if (window.Cesium) { setCesiumLoaded(true); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).Cesium) { setCesiumLoaded(true); return }
 
     const link = document.createElement('link')
     link.rel = 'stylesheet'
@@ -54,12 +53,13 @@ export default function MapPage() {
     document.head.appendChild(script)
   }, [])
 
-  // Init viewer
+  // Init Cesium viewer
   useEffect(() => {
     if (!cesiumLoaded || !cesiumContainer.current || viewerRef.current) return
 
-    const Cesium = window.Cesium
-    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.demo'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Cesium: CesiumType = (window as any).Cesium
+    Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN ?? ''
 
     const viewer = new Cesium.Viewer(cesiumContainer.current, {
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -77,23 +77,18 @@ export default function MapPage() {
 
     viewerRef.current = viewer
 
-    // Fly to Riyadh
     viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(TOWER_CENTER.lon, TOWER_CENTER.lat, 800),
       orientation: { pitch: Cesium.Math.toRadians(-45) },
     })
 
-    // Add asset pins
-    assets.forEach((asset) => {
+    assets.forEach((asset, idx) => {
       const center = asset.site.name.includes('NRR') ? NRR_CENTER : TOWER_CENTER
-      // Spread pins around the center based on asset index
-      const idx = assets.indexOf(asset)
-      const angle = (idx / assets.length) * 2 * Math.PI
+      const angle  = (idx / Math.max(assets.length, 1)) * 2 * Math.PI
       const radius = 0.001
-      const lon = center.lon + radius * Math.cos(angle)
-      const lat = center.lat + radius * Math.sin(angle)
-
-      const color = STATUS_COLORS[asset.status] || '#888'
+      const lon    = center.lon + radius * Math.cos(angle)
+      const lat    = center.lat + radius * Math.sin(angle)
+      const color  = STATUS_COLORS[asset.status as keyof typeof STATUS_COLORS] ?? '#888'
 
       viewer.entities.add({
         id: asset.id,
@@ -119,12 +114,11 @@ export default function MapPage() {
       })
     })
 
-    // Click handler
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
     handler.setInputAction((click: { position: unknown }) => {
-      const picked = viewer.scene.pick(click.position as Cesium.Cartesian2)
+      const picked = viewer.scene.pick(click.position)
       if (Cesium.defined(picked) && picked.id) {
-        const found = assets.find(a => a.id === picked.id.id)
+        const found = assets.find((a: Asset) => a.id === picked.id.id)
         if (found) setSelectedAsset(found)
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
@@ -145,7 +139,6 @@ export default function MapPage() {
       />
 
       <div className="relative flex-1 overflow-hidden">
-        {/* Cesium container */}
         <div ref={cesiumContainer} className="absolute inset-0" />
 
         {/* Legend */}
@@ -154,9 +147,9 @@ export default function MapPage() {
             <CardContent className="p-3 space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Legend</p>
               {[
-                { color: STATUS_COLORS.OPERATIONAL, label: 'Operational' },
-                { color: STATUS_COLORS.NEEDS_MAINTENANCE, label: 'Needs Maintenance' },
-                { color: STATUS_COLORS.OUT_OF_SERVICE, label: 'Out of Service' },
+                { color: STATUS_COLORS.OPERATIONAL,       label: 'Operational' },
+                { color: STATUS_COLORS.NEEDS_MAINTENANCE,  label: 'Needs Maintenance' },
+                { color: STATUS_COLORS.OUT_OF_SERVICE,     label: 'Out of Service' },
               ].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />

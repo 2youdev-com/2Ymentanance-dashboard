@@ -27,7 +27,7 @@ export default function DashboardPage() {
     try {
       const params = selectedSiteId ? { siteId: selectedSiteId } : {}
       const [statsRes, activityRes] = await Promise.all([
-        api.get('/assets/stats', { params }),
+        api.get('/dashboard/kpi', { params }),
         api.get('/activity', { params }),
       ])
       setStats(statsRes.data.data)

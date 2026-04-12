@@ -3,6 +3,8 @@ import { LayoutDashboard, Package, Wrench, AlertTriangle, Map, Users, LogOut, Bu
 import { useAuthStore, useSiteStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import api from '@/lib/api'
+import { disconnectSocket } from '@/hooks/useSocket'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -18,7 +20,13 @@ export function Sidebar() {
   const { selectedSiteId, setSelectedSite } = useSiteStore()
   const navigate = useNavigate()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      // token may already be expired — proceed anyway
+    }
+    disconnectSocket()
     clearAuth()
     navigate('/login')
   }

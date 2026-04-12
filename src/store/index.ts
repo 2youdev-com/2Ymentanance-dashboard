@@ -31,10 +31,12 @@ export const useSiteStore = create<SiteState>((set) => ({
   setSelectedSite: (id) => set({ selectedSiteId: id }),
 }))
 
+// Fixed: added assetId to match ActivityEvent type
 interface ActivityState {
   events: {
     id: string
     type: string
+    assetId: string
     assetName: string
     siteName: string
     technicianName: string
