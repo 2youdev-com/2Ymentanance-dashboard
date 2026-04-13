@@ -8,14 +8,14 @@ import { useSiteStore } from '@/store'
 import { Asset } from '@/types'
 import api from '@/lib/api'
 
-// Cesium is loaded via CDN — no npm package needed
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CesiumType = any
 
+const CESIUM_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0OTBhNmJmNy00MTU1LTQxNGEtYTZhMy02OGMzMDhkZTcxMDgiLCJpZCI6NDE3NTIxLCJpYXQiOjE3NzYwNzkwMzF9.c0Ii0L5KEryd-n6KKgjnR2mHjT2BrHmd5d3QUVrUXfQ'
+
 const STATUS_COLORS = {
-  OPERATIONAL: '#22c55e',
+  OPERATIONAL:       '#22c55e',
   NEEDS_MAINTENANCE: '#eab308',
-  OUT_OF_SERVICE: '#ef4444',
+  OUT_OF_SERVICE:    '#ef4444',
 }
 
 const TOWER_CENTER = { lon: 46.6753, lat: 24.6896 }
@@ -23,24 +23,21 @@ const NRR_CENTER   = { lon: 46.6800, lat: 24.6920 }
 
 export default function MapPage() {
   const cesiumContainer = useRef<HTMLDivElement>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const viewerRef = useRef<any>(null)
   const { selectedSiteId } = useSiteStore()
   const navigate = useNavigate()
   const [assets, setAssets] = useState<Asset[]>([])
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [cesiumLoaded, setCesiumLoaded] = useState(false)
+  const [mapReady, setMapReady] = useState(false)
 
-  // Load assets
   useEffect(() => {
     const params: Record<string, string> = { limit: '200' }
     if (selectedSiteId) params.siteId = selectedSiteId
     api.get('/assets', { params }).then(res => setAssets(res.data.data))
   }, [selectedSiteId])
 
-  // Load CesiumJS from CDN
   useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((window as any).Cesium) { setCesiumLoaded(true); return }
 
     const link = document.createElement('link')
@@ -54,39 +51,51 @@ export default function MapPage() {
     document.head.appendChild(script)
   }, [])
 
-  // Init Cesium viewer
   useEffect(() => {
     if (!cesiumLoaded || !cesiumContainer.current || viewerRef.current) return
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const Cesium: CesiumType = (window as any).Cesium
-    Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN ?? ''
+    Cesium.Ion.defaultAccessToken = CESIUM_TOKEN
 
     const viewer = new Cesium.Viewer(cesiumContainer.current, {
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-      baseLayerPicker: false,
-      geocoder: false,
-      homeButton: false,
-      sceneModePicker: false,
+      baseLayerPicker:      false,
+      geocoder:             false,
+      homeButton:           false,
+      sceneModePicker:      false,
       navigationHelpButton: false,
-      animation: false,
-      timeline: false,
-      fullscreenButton: false,
-      infoBox: false,
-      selectionIndicator: false,
+      animation:            false,
+      timeline:             false,
+      fullscreenButton:     false,
+      infoBox:              false,
+      selectionIndicator:   false,
+      terrain: Cesium.Terrain.fromWorldTerrain(),
     })
 
     viewerRef.current = viewer
+    viewer.scene.globe.enableLighting = true
 
+    // OSM 3D Buildings
+    Cesium.createOsmBuildingsAsync().then((osmBuildings: unknown) => {
+      viewer.scene.primitives.add(osmBuildings)
+      setMapReady(true)
+    }).catch(() => setMapReady(true))
+
+    // Fly to Bank Tower
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(TOWER_CENTER.lon, TOWER_CENTER.lat, 800),
-      orientation: { pitch: Cesium.Math.toRadians(-45) },
+      destination: Cesium.Cartesian3.fromDegrees(TOWER_CENTER.lon, TOWER_CENTER.lat, 600),
+      orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch:   Cesium.Math.toRadians(-35),
+        roll:    0,
+      },
+      duration: 2,
     })
 
+    // Asset pins
     assets.forEach((asset, idx) => {
-      const center = asset.site.name.includes('NRR') ? NRR_CENTER : TOWER_CENTER
+      const center = asset.site?.name?.includes('NRR') ? NRR_CENTER : TOWER_CENTER
       const angle  = (idx / Math.max(assets.length, 1)) * 2 * Math.PI
-      const radius = 0.001
+      const radius = 0.0008
       const lon    = center.lon + radius * Math.cos(angle)
       const lat    = center.lat + radius * Math.sin(angle)
       const color  = STATUS_COLORS[asset.status as keyof typeof STATUS_COLORS] ?? '#888'
@@ -94,23 +103,26 @@ export default function MapPage() {
       viewer.entities.add({
         id: asset.id,
         name: asset.name,
-        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        position: Cesium.Cartesian3.fromDegrees(lon, lat, 10),
         billboard: {
           image: createPinSvg(color),
-          width: 32,
-          height: 32,
+          width: 36,
+          height: 36,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         label: {
-          text: asset.name,
-          font: '11px sans-serif',
-          pixelOffset: new Cesium.Cartesian2(0, -36),
-          fillColor: Cesium.Color.WHITE,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          showBackground: true,
-          backgroundColor: new Cesium.Color(0, 0, 0, 0.6),
+          text:            asset.name,
+          font:            '12px sans-serif',
+          pixelOffset:     new Cesium.Cartesian2(0, -40),
+          fillColor:       Cesium.Color.WHITE,
+          outlineColor:    Cesium.Color.BLACK,
+          outlineWidth:    2,
+          style:           Cesium.LabelStyle.FILL_AND_OUTLINE,
+          showBackground:  true,
+          backgroundColor: new Cesium.Color(0, 0, 0, 0.65),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new Cesium.NearFarScalar(100, 1.0, 2000, 0.4),
         },
       })
     })
@@ -121,6 +133,8 @@ export default function MapPage() {
       if (Cesium.defined(picked) && picked.id) {
         const found = assets.find((a: Asset) => a.id === picked.id.id)
         if (found) setSelectedAsset(found)
+      } else {
+        setSelectedAsset(null)
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
 
@@ -129,13 +143,13 @@ export default function MapPage() {
       viewer.destroy()
       viewerRef.current = null
     }
-  }, [cesiumLoaded, assets, navigate])
+  }, [cesiumLoaded, assets])
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
         title="Site Map"
-        description="Asset locations across Bank Tower and NRR IT Hub"
+        description="Bank Tower & NRR IT Hub — King Fahd Road, Riyadh"
         breadcrumbs={[{ label: 'Site Map' }]}
       />
 
@@ -149,14 +163,17 @@ export default function MapPage() {
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Legend</p>
               {[
                 { color: STATUS_COLORS.OPERATIONAL,       label: 'Operational' },
-                { color: STATUS_COLORS.NEEDS_MAINTENANCE,  label: 'Needs Maintenance' },
-                { color: STATUS_COLORS.OUT_OF_SERVICE,     label: 'Out of Service' },
+                { color: STATUS_COLORS.NEEDS_MAINTENANCE, label: 'Needs Maintenance' },
+                { color: STATUS_COLORS.OUT_OF_SERVICE,    label: 'Out of Service' },
               ].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                   <span className="text-xs">{label}</span>
                 </div>
               ))}
+              <div className="pt-1 border-t border-border">
+                <p className="text-xs text-muted-foreground">Click a pin for details</p>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -171,22 +188,16 @@ export default function MapPage() {
                     <p className="font-semibold text-sm">{selectedAsset.name}</p>
                     <p className="text-xs text-muted-foreground">{selectedAsset.type.replace(/_/g, ' ')}</p>
                   </div>
-                  <button
-                    onClick={() => setSelectedAsset(null)}
-                    className="text-muted-foreground hover:text-foreground text-lg leading-none"
-                  >×</button>
+                  <button onClick={() => setSelectedAsset(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none ml-2">×</button>
                 </div>
                 <div className="space-y-1.5 text-xs text-muted-foreground mb-3">
-                  <p>Asset #: {selectedAsset.assetNumber}</p>
-                  <p>Location: {[selectedAsset.building, selectedAsset.floor, selectedAsset.zone].filter(Boolean).join(' · ')}</p>
-                  <p>Site: {selectedAsset.site.name}</p>
+                  <p><span className="font-medium text-foreground">Asset #:</span> {selectedAsset.assetNumber}</p>
+                  <p><span className="font-medium text-foreground">Location:</span> {[selectedAsset.building, selectedAsset.floor, selectedAsset.zone].filter(Boolean).join(' · ')}</p>
+                  <p><span className="font-medium text-foreground">Site:</span> {selectedAsset.site.name}</p>
                 </div>
                 <div className="flex items-center justify-between">
                   <StatusBadge status={selectedAsset.status} />
-                  <button
-                    onClick={() => navigate(`/assets/${selectedAsset.id}`)}
-                    className="text-xs text-primary hover:underline font-medium"
-                  >
+                  <button onClick={() => navigate(`/assets/${selectedAsset.id}`)} className="text-xs text-primary hover:underline font-medium">
                     View details →
                   </button>
                 </div>
@@ -195,12 +206,13 @@ export default function MapPage() {
           </div>
         )}
 
-        {/* Loading overlay */}
-        {!cesiumLoaded && (
-          <div className="absolute inset-0 flex items-center justify-center bg-muted/80 z-20">
+        {/* Loading */}
+        {(!cesiumLoaded || !mapReady) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-20">
             <div className="text-center">
               <div className="animate-spin rounded-full border-2 border-muted border-t-primary h-10 w-10 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">Loading map…</p>
+              <p className="text-sm font-medium">Loading 3D map…</p>
+              <p className="text-xs text-muted-foreground mt-1">Bank Tower · Riyadh, KSA</p>
             </div>
           </div>
         )}
@@ -210,10 +222,10 @@ export default function MapPage() {
 }
 
 function createPinSvg(color: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-    <circle cx="16" cy="14" r="10" fill="${color}" stroke="white" stroke-width="2"/>
-    <polygon points="16,28 10,20 22,20" fill="${color}"/>
-    <circle cx="16" cy="14" r="4" fill="white" opacity="0.8"/>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+    <circle cx="18" cy="15" r="12" fill="${color}" stroke="white" stroke-width="2.5"/>
+    <polygon points="18,34 11,23 25,23" fill="${color}"/>
+    <circle cx="18" cy="15" r="5" fill="white" opacity="0.9"/>
   </svg>`
   return `data:image/svg+xml;base64,${btoa(svg)}`
 }
