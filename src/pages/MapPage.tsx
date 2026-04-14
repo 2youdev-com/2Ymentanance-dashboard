@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useState, useCallback } from "react"
+import React, { useMemo, useState } from "react"
 import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Html, Line } from "@react-three/drei"
 import * as THREE from "three"
@@ -28,6 +28,8 @@ type Asset = {
   building: string
   shaftIndex: number
 }
+
+type CameraView = "default" | "top" | "left" | "right" | "fit"
 
 const FLOORS = 12
 const FLOOR_H = 2.9
@@ -58,10 +60,10 @@ const ASSET_TYPES: ("All" | AssetType)[] = [
 ]
 
 const shafts = [
-  { x: -1.15, z: -0.72, r: 0.22, ring: 0.54 },
-  { x: 1.05, z: -0.72, r: 0.22, ring: 0.54 },
-  { x: -1.15, z: 0.72, r: 0.22, ring: 0.54 },
-  { x: 1.05, z: 0.72, r: 0.22, ring: 0.54 },
+  { x: -1.15, z: -0.72, r: 0.22 },
+  { x: 1.05, z: -0.72, r: 0.22 },
+  { x: -1.15, z: 0.72, r: 0.22 },
+  { x: 1.05, z: 0.72, r: 0.22 },
 ]
 
 function makeAssets(): Asset[] {
@@ -240,6 +242,7 @@ function Arc({
   color,
   start,
   end,
+  rotation = [0, 0, 0],
 }: {
   x: number
   y: number
@@ -248,9 +251,10 @@ function Arc({
   color: string
   start: number
   end: number
+  rotation?: [number, number, number]
 }) {
   const pts: [number, number, number][] = []
-  const seg = 64
+  const seg = 72
 
   for (let i = 0; i <= seg; i++) {
     const t = start + ((end - start) * i) / seg
@@ -258,7 +262,7 @@ function Arc({
   }
 
   return (
-    <group position={[x, y, z]} rotation={[Math.PI / 2, 0, 0]}>
+    <group position={[x, y, z]} rotation={rotation}>
       <Line
         points={pts}
         color={color}
@@ -283,8 +287,13 @@ function AssetNode({
   const y = (asset.floor - 1) * FLOOR_H + 0.64
   const color = STATUS_COLORS[asset.status]
 
-  const start = asset.shaftIndex % 2 === 0 ? 0.82 : 1.08
-  const end = asset.shaftIndex % 2 === 0 ? 5.12 : 5.38
+  const [hovered, setHovered] = React.useState(false)
+
+  const start = 0.7
+  const end = 5.6
+  const radius = shaft.r + 0.24
+
+  const showInfo = hovered || selected
 
   return (
     <group position={[shaft.x, y, shaft.z]}>
@@ -292,23 +301,47 @@ function AssetNode({
         x={0}
         y={0}
         z={0}
-        radius={shaft.ring}
+        radius={radius}
         color={color}
         start={start}
         end={end}
+        rotation={[0, 0, 0]}
       />
 
       <mesh
-        position={[0.27, 0.18, 0]}
+        rotation={[Math.PI / 2, 0, 0]}
+        onPointerOver={(e) => {
+          e.stopPropagation()
+          setHovered(true)
+          document.body.style.cursor = "pointer"
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation()
+          setHovered(false)
+          document.body.style.cursor = "default"
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect(asset)
+        }}
+      >
+        <torusGeometry args={[radius, 0.12, 12, 64, end - start]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+
+      <mesh
+        position={[radius, 0.02, 0]}
         onClick={(e) => {
           e.stopPropagation()
           onSelect(asset)
         }}
         onPointerOver={(e) => {
           e.stopPropagation()
+          setHovered(true)
           document.body.style.cursor = "pointer"
         }}
         onPointerOut={() => {
+          setHovered(false)
           document.body.style.cursor = "default"
         }}
       >
@@ -316,11 +349,11 @@ function AssetNode({
         <meshBasicMaterial color={color} />
       </mesh>
 
-      {selected && (
-        <Html position={[0.95, 1.1, 0]} center>
+      {showInfo && (
+        <Html position={[0.9, 1.1, 0]} center>
           <div className="min-w-[180px] rounded-2xl border border-cyan-500/20 bg-[#0b1226]/95 px-4 py-3 text-white shadow-2xl backdrop-blur-md">
             <div className="text-[12px] font-semibold text-white">{asset.name}</div>
-            <div className="mt-1 text-[11px] tracking-[0.25em] text-cyan-300 uppercase">
+            <div className="mt-1 text-[11px] uppercase tracking-[0.25em] text-cyan-300">
               {asset.type}
             </div>
             <div className="mt-2 flex items-center gap-2 text-[12px]">
@@ -339,6 +372,7 @@ function AssetNode({
             <div className="mt-2 text-[11px] text-slate-400">
               {asset.floor}F · {asset.zone}
             </div>
+            <div className="mt-1 text-[11px] text-slate-500">{asset.building}</div>
           </div>
         </Html>
       )}
@@ -383,13 +417,31 @@ function GroundGrid() {
   )
 }
 
-function CameraController() {
+function CameraController({
+  view,
+}: {
+  view: CameraView
+}) {
   const { camera } = useThree()
 
   React.useEffect(() => {
-    camera.position.set(14, 14, 14)
-    camera.lookAt(0, H * 0.48, 0)
-  }, [camera])
+    if (view === "default") {
+      camera.position.set(14, 14, 14)
+      camera.lookAt(0, H * 0.48, 0)
+    } else if (view === "top") {
+      camera.position.set(0, H + 12, 0.01)
+      camera.lookAt(0, H * 0.48, 0)
+    } else if (view === "left") {
+      camera.position.set(-16, H * 0.48, 0)
+      camera.lookAt(0, H * 0.48, 0)
+    } else if (view === "right") {
+      camera.position.set(16, H * 0.48, 0)
+      camera.lookAt(0, H * 0.48, 0)
+    } else if (view === "fit") {
+      camera.position.set(18, 18, 18)
+      camera.lookAt(0, H * 0.48, 0)
+    }
+  }, [camera, view])
 
   return null
 }
@@ -399,6 +451,7 @@ export default function DigitalTwinPage() {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<AssetStatus | "ALL">("ALL")
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
+  const [cameraView, setCameraView] = useState<CameraView>("default")
 
   const [layers, setLayers] = useState({
     workOrders: false,
@@ -438,7 +491,7 @@ export default function DigitalTwinPage() {
         <Canvas camera={{ position: [14, 14, 14], fov: 30 }}>
           <color attach="background" args={[BG]} />
           <ambientLight intensity={1} />
-          <CameraController />
+          <CameraController view={cameraView} />
           <GroundGrid />
           <Building3D
             assets={filteredAssets}
@@ -462,10 +515,9 @@ export default function DigitalTwinPage() {
       </div>
 
       <div className="pointer-events-none absolute inset-0">
-        {/* Top Bar - Asset Type & Status Filters */}
         <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 px-5 py-4 shadow-2xl backdrop-blur-md">
           <div className="flex flex-wrap items-center gap-5">
-            <div className="text-[12px] font-semibold tracking-[0.25em] text-slate-400 uppercase">
+            <div className="text-[12px] font-semibold uppercase tracking-[0.25em] text-slate-400">
               By Asset Type
             </div>
 
@@ -486,53 +538,80 @@ export default function DigitalTwinPage() {
             </div>
 
             <div className="ml-auto flex items-center gap-4">
-              <div className="text-[12px] font-semibold tracking-[0.25em] text-slate-400 uppercase">
+              <div className="text-[12px] font-semibold uppercase tracking-[0.25em] text-slate-400">
                 By Status
               </div>
 
               <button
                 onClick={() => setStatusFilter("OPERATIONAL")}
-                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
+                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
                   statusFilter === "OPERATIONAL"
                     ? "border-emerald-400 bg-emerald-500/15 text-emerald-400"
                     : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Operational"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
                 </svg>
               </button>
 
               <button
                 onClick={() => setStatusFilter("SCHEDULED_TASK")}
-                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
+                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
                   statusFilter === "SCHEDULED_TASK"
                     ? "border-yellow-400 bg-yellow-500/15 text-yellow-400"
                     : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Scheduled Task"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                  <line x1="12" y1="9" x2="12" y2="13"></line>
-                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
               </button>
 
               <button
                 onClick={() => setStatusFilter("CRITICAL_ALERT")}
-                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
+                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
                   statusFilter === "CRITICAL_ALERT"
                     ? "border-red-400 bg-red-500/15 text-red-400"
                     : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Critical Alert"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="15" y1="9" x2="9" y2="15"></line>
-                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="15" y1="9" x2="9" y2="15" />
+                  <line x1="9" y1="9" x2="15" y2="15" />
                 </svg>
               </button>
 
@@ -546,7 +625,6 @@ export default function DigitalTwinPage() {
           </div>
         </div>
 
-        {/* Left Panel - Search & Building Status */}
         <div className="pointer-events-auto absolute left-6 top-24 w-[310px]">
           <div className="rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
             <input
@@ -560,18 +638,19 @@ export default function DigitalTwinPage() {
           <div className="mt-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
             <div className="mb-3 flex items-center gap-2">
               {[
-                { icon: "👁", active: true },
-                { icon: "↑", active: false },
-                { icon: "←", active: false },
-                { icon: "→", active: false },
-                { icon: "⤢", active: false },
+                { icon: "👁", active: cameraView === "default", value: "default" as const },
+                { icon: "↑", active: cameraView === "top", value: "top" as const },
+                { icon: "←", active: cameraView === "left", value: "left" as const },
+                { icon: "→", active: cameraView === "right", value: "right" as const },
+                { icon: "⤢", active: cameraView === "fit", value: "fit" as const },
               ].map((item, i) => (
                 <button
                   key={i}
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
+                  onClick={() => setCameraView(item.value)}
+                  className={`flex h-10 w-10 items-center justify-center rounded-xl border transition ${
                     item.active
                       ? "border-emerald-400 bg-emerald-500/15 text-emerald-300"
-                      : "border-slate-700 bg-[#0b1630] text-slate-400"
+                      : "border-slate-700 bg-[#0b1630] text-slate-400 hover:text-white"
                   }`}
                 >
                   <span className="text-sm">{item.icon}</span>
@@ -580,7 +659,7 @@ export default function DigitalTwinPage() {
             </div>
 
             <div className="rounded-2xl border border-cyan-500/10 bg-[#0b1630] p-4">
-              <div className="mb-4 text-xs font-semibold tracking-[0.25em] text-slate-500 uppercase">
+              <div className="mb-4 text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
                 Building Status
               </div>
 
@@ -607,9 +686,8 @@ export default function DigitalTwinPage() {
           </div>
         </div>
 
-        {/* Right Panel - Layers */}
         <div className="pointer-events-auto absolute right-6 top-24 w-[220px] rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-4 shadow-2xl backdrop-blur-md">
-          <div className="mb-4 text-xs font-semibold tracking-[0.25em] text-slate-500 uppercase">
+          <div className="mb-4 text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
             Layers
           </div>
 
@@ -640,35 +718,80 @@ export default function DigitalTwinPage() {
                 >
                   <span className="flex items-center gap-2">
                     {item.key === "workOrders" && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                       </svg>
                     )}
                     {item.key === "reports" && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                        <line x1="12" y1="9" x2="12" y2="13"></line>
-                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
                       </svg>
                     )}
                     {item.key === "maintenance" && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                        <line x1="16" y1="2" x2="16" y2="6"></line>
-                        <line x1="8" y1="2" x2="8" y2="6"></line>
-                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
                       </svg>
                     )}
                     {item.key === "floorHealth" && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                       </svg>
                     )}
                     {item.key === "insights" && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="20" x2="18" y2="10"></line>
-                        <line x1="12" y1="20" x2="12" y2="4"></line>
-                        <line x1="6" y1="20" x2="6" y2="14"></line>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <line x1="18" y1="20" x2="18" y2="10" />
+                        <line x1="12" y1="20" x2="12" y2="4" />
+                        <line x1="6" y1="20" x2="6" y2="14" />
                       </svg>
                     )}
                     {item.label}
