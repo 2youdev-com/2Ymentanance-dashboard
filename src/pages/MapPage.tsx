@@ -1,6 +1,9 @@
-import React, { useMemo, useState } from "react"
-import { Canvas } from "@react-three/fiber"
+"use client"
+
+import React, { useMemo, useState, useCallback } from "react"
+import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Html, Line } from "@react-three/drei"
+import * as THREE from "three"
 
 type AssetType =
   | "Chiller"
@@ -380,6 +383,17 @@ function GroundGrid() {
   )
 }
 
+function CameraController() {
+  const { camera } = useThree()
+
+  React.useEffect(() => {
+    camera.position.set(14, 14, 14)
+    camera.lookAt(0, H * 0.48, 0)
+  }, [camera])
+
+  return null
+}
+
 export default function DigitalTwinPage() {
   const [activeType, setActiveType] = useState<"All" | AssetType>("All")
   const [search, setSearch] = useState("")
@@ -424,6 +438,7 @@ export default function DigitalTwinPage() {
         <Canvas camera={{ position: [14, 14, 14], fov: 30 }}>
           <color attach="background" args={[BG]} />
           <ambientLight intensity={1} />
+          <CameraController />
           <GroundGrid />
           <Building3D
             assets={filteredAssets}
@@ -447,6 +462,7 @@ export default function DigitalTwinPage() {
       </div>
 
       <div className="pointer-events-none absolute inset-0">
+        {/* Top Bar - Asset Type & Status Filters */}
         <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 px-5 py-4 shadow-2xl backdrop-blur-md">
           <div className="flex flex-wrap items-center gap-5">
             <div className="text-[12px] font-semibold tracking-[0.25em] text-slate-400 uppercase">
@@ -476,38 +492,48 @@ export default function DigitalTwinPage() {
 
               <button
                 onClick={() => setStatusFilter("OPERATIONAL")}
-                className={`h-8 w-8 rounded-full border ${
+                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
                   statusFilter === "OPERATIONAL"
-                    ? "border-emerald-400 bg-emerald-500/15"
-                    : "border-slate-600 bg-transparent"
+                    ? "border-emerald-400 bg-emerald-500/15 text-emerald-400"
+                    : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Operational"
               >
-                ✓
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
               </button>
 
               <button
                 onClick={() => setStatusFilter("SCHEDULED_TASK")}
-                className={`h-8 w-8 rounded-full border ${
+                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
                   statusFilter === "SCHEDULED_TASK"
-                    ? "border-yellow-400 bg-yellow-500/15"
-                    : "border-slate-600 bg-transparent"
+                    ? "border-yellow-400 bg-yellow-500/15 text-yellow-400"
+                    : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Scheduled Task"
               >
-                △
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
               </button>
 
               <button
                 onClick={() => setStatusFilter("CRITICAL_ALERT")}
-                className={`h-8 w-8 rounded-full border ${
+                className={`h-8 w-8 rounded-full border flex items-center justify-center ${
                   statusFilter === "CRITICAL_ALERT"
-                    ? "border-red-400 bg-red-500/15"
-                    : "border-slate-600 bg-transparent"
+                    ? "border-red-400 bg-red-500/15 text-red-400"
+                    : "border-slate-600 bg-transparent text-slate-400"
                 }`}
                 title="Critical Alert"
               >
-                ⊗
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="15" y1="9" x2="9" y2="15"></line>
+                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
               </button>
 
               <button
@@ -520,6 +546,7 @@ export default function DigitalTwinPage() {
           </div>
         </div>
 
+        {/* Left Panel - Search & Building Status */}
         <div className="pointer-events-auto absolute left-6 top-24 w-[310px]">
           <div className="rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
             <input
@@ -532,16 +559,22 @@ export default function DigitalTwinPage() {
 
           <div className="mt-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
             <div className="mb-3 flex items-center gap-2">
-              {["👁", "↑", "←", "→", "⤢"].map((icon, i) => (
+              {[
+                { icon: "👁", active: true },
+                { icon: "↑", active: false },
+                { icon: "←", active: false },
+                { icon: "→", active: false },
+                { icon: "⤢", active: false },
+              ].map((item, i) => (
                 <button
                   key={i}
                   className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
-                    i === 0
+                    item.active
                       ? "border-emerald-400 bg-emerald-500/15 text-emerald-300"
                       : "border-slate-700 bg-[#0b1630] text-slate-400"
                   }`}
                 >
-                  {icon}
+                  <span className="text-sm">{item.icon}</span>
                 </button>
               ))}
             </div>
@@ -574,6 +607,7 @@ export default function DigitalTwinPage() {
           </div>
         </div>
 
+        {/* Right Panel - Layers */}
         <div className="pointer-events-auto absolute right-6 top-24 w-[220px] rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-4 shadow-2xl backdrop-blur-md">
           <div className="mb-4 text-xs font-semibold tracking-[0.25em] text-slate-500 uppercase">
             Layers
@@ -604,7 +638,41 @@ export default function DigitalTwinPage() {
                       : "bg-transparent text-slate-400 hover:bg-white/5"
                   }`}
                 >
-                  <span>{item.label}</span>
+                  <span className="flex items-center gap-2">
+                    {item.key === "workOrders" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                      </svg>
+                    )}
+                    {item.key === "reports" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                      </svg>
+                    )}
+                    {item.key === "maintenance" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                      </svg>
+                    )}
+                    {item.key === "floorHealth" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                      </svg>
+                    )}
+                    {item.key === "insights" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="20" x2="18" y2="10"></line>
+                        <line x1="12" y1="20" x2="12" y2="4"></line>
+                        <line x1="6" y1="20" x2="6" y2="14"></line>
+                      </svg>
+                    )}
+                    {item.label}
+                  </span>
                   <span
                     className={`h-2.5 w-2.5 rounded-full ${
                       active ? "bg-red-400" : "bg-slate-700"
