@@ -1,9 +1,13 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
-import { Canvas, useThree } from "@react-three/fiber"
-import { OrbitControls, Html, Line } from "@react-three/drei"
+import React, { useEffect, useMemo, useRef, useState } from "react"
+import { Canvas, useFrame, useThree } from "@react-three/fiber"
+import { Html, OrbitControls, RoundedBox, Text } from "@react-three/drei"
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib"
 import * as THREE from "three"
+import { PageLoader } from "@/components/ui/spinner"
+import { useSiteStore } from "@/store"
+import api from "@/lib/api"
 
 type AssetType =
   | "Chiller"
@@ -26,24 +30,47 @@ type Asset = {
   floor: number
   zone: string
   building: string
-  shaftIndex: number
+  slotIndex: number
+  x: number
+  z: number
+}
+
+type ApiAsset = {
+  id: string
+  name: string
+  type: string
+  status: string
+  floor?: string | number | null
+  zone?: string | null
+  building?: string | null
 }
 
 type CameraView = "default" | "top" | "left" | "right" | "fit"
 
 const FLOORS = 12
-const FLOOR_H = 2.9
-const W = 6.4
-const D = 4.4
-const H = FLOORS * FLOOR_H
+const FLOOR_GAP = 2.75
 
-const BG = "#020816"
-const CYAN = "#9efcff"
+const TOWER_W = 11.6
+const TOWER_D = 7.6
+const TOWER_H = (FLOORS - 1) * FLOOR_GAP + 1.9
+const PODIUM_W = 14.4
+const PODIUM_D = 10.4
+const PODIUM_H = 1.2
+const CORE_W = 2.15
+const CORE_D = 1.7
+
+const BG = "#04111d"
 
 const STATUS_COLORS: Record<AssetStatus, string> = {
-  OPERATIONAL: "#23d3b1",
-  SCHEDULED_TASK: "#f0b233",
-  CRITICAL_ALERT: "#ff6a63",
+  OPERATIONAL: "#36d399",
+  SCHEDULED_TASK: "#f4b740",
+  CRITICAL_ALERT: "#ff6b6b",
+}
+
+const STATUS_LABELS: Record<AssetStatus, string> = {
+  OPERATIONAL: "Operational",
+  SCHEDULED_TASK: "Scheduled Task",
+  CRITICAL_ALERT: "Critical Alert",
 }
 
 const ASSET_TYPES: ("All" | AssetType)[] = [
@@ -59,222 +86,533 @@ const ASSET_TYPES: ("All" | AssetType)[] = [
   "CRAC",
 ]
 
-const shafts = [
-  { x: -1.15, z: -0.72, r: 0.22 },
-  { x: 1.05, z: -0.72, r: 0.22 },
-  { x: -1.15, z: 0.72, r: 0.22 },
-  { x: 1.05, z: 0.72, r: 0.22 },
+const FLOOR_SLOTS = [
+  { x: -3.5, z: -2.1 },
+  { x: -1.15, z: -2.1 },
+  { x: 1.15, z: -2.1 },
+  { x: 3.5, z: -2.1 },
+  { x: -3.5, z: 0 },
+  { x: -1.15, z: 0 },
+  { x: 1.15, z: 0 },
+  { x: 3.5, z: 0 },
+  { x: -3.5, z: 2.1 },
+  { x: -1.15, z: 2.1 },
+  { x: 1.15, z: 2.1 },
+  { x: 3.5, z: 2.1 },
 ]
 
-function makeAssets(): Asset[] {
-  const types: AssetType[] = [
-    "FCU",
-    "AHU",
-    "Chiller",
-    "UPS",
-    "CRAC",
-    "Electrical",
-    "Generator",
-    "Fire Pump",
-    "Elevator",
-  ]
+function mapApiStatus(status: string): AssetStatus {
+  if (status === "OPERATIONAL") return "OPERATIONAL"
+  if (status === "NEEDS_MAINTENANCE") return "SCHEDULED_TASK"
+  if (status === "OUT_OF_SERVICE") return "CRITICAL_ALERT"
+  return "OPERATIONAL"
+}
 
-  const assets: Asset[] = []
+function mapApiType(type: string): AssetType {
+  switch (type) {
+    case "CHILLER":
+      return "Chiller"
+    case "AHU":
+      return "AHU"
+    case "ELEVATOR":
+      return "Elevator"
+    case "ELECTRICAL_PANEL":
+    case "POWER_DISTRIBUTION":
+    case "AUTO_TRANSFER_SWITCH":
+    case "FIRE_SUPPRESSION":
+      return "Electrical"
+    case "GENERATOR":
+      return "Generator"
+    case "FIRE_PUMP":
+      return "Fire Pump"
+    case "FCU":
+      return "FCU"
+    case "UPS":
+      return "UPS"
+    case "PRECISION_COOLING":
+      return "CRAC"
+    default:
+      return "Electrical"
+  }
+}
 
-  for (let floor = 1; floor <= FLOORS; floor++) {
-    for (let shaftIndex = 0; shaftIndex < shafts.length; shaftIndex++) {
-      const type = types[(floor + shaftIndex) % types.length]
-      let status: AssetStatus = "OPERATIONAL"
+function parseFloorValue(floor: string | number | null | undefined): number {
+  if (typeof floor === "number" && !Number.isNaN(floor)) {
+    return Math.min(Math.max(Math.floor(floor), 1), FLOORS)
+  }
 
-      if (shaftIndex === 0 && floor % 2 === 0) status = "CRITICAL_ALERT"
-      else if (shaftIndex === 1 && floor % 3 === 1) status = "SCHEDULED_TASK"
-      else if (shaftIndex === 3 && floor % 4 === 0) status = "SCHEDULED_TASK"
+  if (!floor) return 1
 
-      assets.push({
-        id: `${floor}-${shaftIndex}`,
-        name: `${floor}F East ${type}-${String(shaftIndex + 1).padStart(2, "0")}`,
-        type,
-        status,
-        floor,
-        zone: `East ${floor} E0${shaftIndex + 1}`,
-        building: "Tower",
-        shaftIndex,
-      })
+  const value = String(floor).toLowerCase().trim()
+
+  if (value.includes("ground")) return 1
+  if (value.includes("basement")) return 1
+  if (value.includes("roof")) return FLOORS
+
+  const match = value.match(/\d+/)
+  if (match) {
+    const num = Number(match[0])
+    if (!Number.isNaN(num)) {
+      return Math.min(Math.max(num, 1), FLOORS)
     }
   }
 
-  return assets
+  return 1
 }
 
-function Edge({
-  a,
-  b,
-  color = CYAN,
-  opacity = 0.72,
-  width = 1,
-}: {
-  a: [number, number, number]
-  b: [number, number, number]
-  color?: string
-  opacity?: number
-  width?: number
-}) {
-  return (
-    <Line
-      points={[a, b]}
-      color={color}
-      transparent
-      opacity={opacity}
-      lineWidth={width}
-    />
-  )
+function mapAssetsFromApi(apiAssets: ApiAsset[]): Asset[] {
+  const floorCounters: Record<number, number> = {}
+
+  return [...apiAssets]
+    .sort((a, b) => parseFloorValue(a.floor) - parseFloorValue(b.floor))
+    .map((asset) => {
+      const floorNumber = parseFloorValue(asset.floor)
+      const currentCount = floorCounters[floorNumber] ?? 0
+      floorCounters[floorNumber] = currentCount + 1
+
+      const slotIndex = currentCount % FLOOR_SLOTS.length
+      const slot = FLOOR_SLOTS[slotIndex]
+
+      return {
+        id: asset.id,
+        name: asset.name,
+        type: mapApiType(asset.type),
+        status: mapApiStatus(asset.status),
+        floor: floorNumber,
+        zone: asset.zone || `Zone ${currentCount + 1}`,
+        building: asset.building || "Tower",
+        slotIndex,
+        x: slot.x,
+        z: slot.z,
+      }
+    })
 }
 
-function OuterFrame() {
-  const hw = W / 2
-  const hd = D / 2
-
-  return (
-    <>
-      <Edge a={[-hw, 0, -hd]} b={[hw, 0, -hd]} />
-      <Edge a={[hw, 0, -hd]} b={[hw, 0, hd]} />
-      <Edge a={[hw, 0, hd]} b={[-hw, 0, hd]} />
-      <Edge a={[-hw, 0, hd]} b={[-hw, 0, -hd]} />
-
-      <Edge a={[-hw, H, -hd]} b={[hw, H, -hd]} />
-      <Edge a={[hw, H, -hd]} b={[hw, H, hd]} />
-      <Edge a={[hw, H, hd]} b={[-hw, H, hd]} />
-      <Edge a={[-hw, H, hd]} b={[-hw, H, -hd]} />
-
-      <Edge a={[-hw, 0, -hd]} b={[-hw, H, -hd]} />
-      <Edge a={[hw, 0, -hd]} b={[hw, H, -hd]} />
-      <Edge a={[-hw, 0, hd]} b={[-hw, H, hd]} />
-      <Edge a={[hw, 0, hd]} b={[hw, H, hd]} />
-    </>
-  )
+function floorY(floor: number) {
+  return (floor - 1) * FLOOR_GAP
 }
 
-function FloorFrames() {
-  const hw = W / 2
-  const hd = D / 2
+function getCameraPreset(view: CameraView) {
+  const centerY = floorY(6)
 
-  return (
-    <>
-      {Array.from({ length: FLOORS + 1 }).map((_, i) => {
-        const y = i * FLOOR_H
-        return (
-          <group key={i}>
-            <Edge a={[-hw, y, -hd]} b={[hw, y, -hd]} opacity={0.95} />
-            <Edge a={[hw, y, -hd]} b={[hw, y, hd]} opacity={0.95} />
-            <Edge a={[hw, y, hd]} b={[-hw, y, hd]} opacity={0.95} />
-            <Edge a={[-hw, y, hd]} b={[-hw, y, -hd]} opacity={0.95} />
-          </group>
-        )
-      })}
-    </>
-  )
-}
-
-function VerticalFaceGrid() {
-  const hw = W / 2
-  const hd = D / 2
-  const xs = [-2.45, -1.65, -0.85, 0, 0.85, 1.65, 2.45]
-  const zs = [-1.45, -0.72, 0, 0.72, 1.45]
-
-  return (
-    <>
-      {xs.map((x) => (
-        <group key={`x-${x}`}>
-          <Edge a={[x, 0, -hd]} b={[x, H, -hd]} opacity={0.24} width={0.8} />
-          <Edge a={[x, 0, hd]} b={[x, H, hd]} opacity={0.24} width={0.8} />
-        </group>
-      ))}
-      {zs.map((z) => (
-        <group key={`z-${z}`}>
-          <Edge a={[-hw, 0, z]} b={[-hw, H, z]} opacity={0.24} width={0.8} />
-          <Edge a={[hw, 0, z]} b={[hw, H, z]} opacity={0.24} width={0.8} />
-        </group>
-      ))}
-    </>
-  )
-}
-
-function SideBracing() {
-  const hw = W / 2
-  const hd = D / 2
-
-  return (
-    <>
-      {Array.from({ length: FLOORS }).map((_, i) => {
-        const y0 = i * FLOOR_H
-        const y1 = (i + 1) * FLOOR_H
-        return (
-          <group key={i}>
-            <Edge a={[-hw, y0, -hd]} b={[-hw, y1, hd]} opacity={0.16} width={0.8} />
-            <Edge a={[-hw, y0, hd]} b={[-hw, y1, -hd]} opacity={0.16} width={0.8} />
-            <Edge a={[hw, y0, -hd]} b={[hw, y1, hd]} opacity={0.16} width={0.8} />
-            <Edge a={[hw, y0, hd]} b={[hw, y1, -hd]} opacity={0.16} width={0.8} />
-          </group>
-        )
-      })}
-    </>
-  )
-}
-
-function Shafts() {
-  return (
-    <>
-      {shafts.map((s, i) => (
-        <mesh key={i} position={[s.x, H / 2, s.z]}>
-          <cylinderGeometry args={[s.r, s.r, H, 28]} />
-          <meshBasicMaterial color="#0b0f14" />
-        </mesh>
-      ))}
-    </>
-  )
-}
-
-function Arc({
-  x,
-  y,
-  z,
-  radius,
-  color,
-  start,
-  end,
-  rotation = [0, 0, 0],
-}: {
-  x: number
-  y: number
-  z: number
-  radius: number
-  color: string
-  start: number
-  end: number
-  rotation?: [number, number, number]
-}) {
-  const pts: [number, number, number][] = []
-  const seg = 72
-
-  for (let i = 0; i <= seg; i++) {
-    const t = start + ((end - start) * i) / seg
-    pts.push([Math.cos(t) * radius, 0, Math.sin(t) * radius])
+  switch (view) {
+    case "top":
+      return {
+        position: new THREE.Vector3(0, 52, 0.01),
+        target: new THREE.Vector3(0, centerY, 0),
+      }
+    case "left":
+      return {
+        position: new THREE.Vector3(-29, centerY + 3, 0),
+        target: new THREE.Vector3(0, centerY, 0),
+      }
+    case "right":
+      return {
+        position: new THREE.Vector3(29, centerY + 3, 0),
+        target: new THREE.Vector3(0, centerY, 0),
+      }
+    case "fit":
+      return {
+        position: new THREE.Vector3(34, 24, 32),
+        target: new THREE.Vector3(0, centerY, 0),
+      }
+    default:
+      return {
+        position: new THREE.Vector3(25, 17, 25),
+        target: new THREE.Vector3(0, centerY, 0),
+      }
   }
+}
 
+function CameraRig({
+  view,
+  controlsRef,
+}: {
+  view: CameraView
+  controlsRef: React.RefObject<OrbitControlsImpl | null>
+}) {
+  const { camera } = useThree()
+  const desiredPosition = useRef(getCameraPreset(view).position.clone())
+  const desiredTarget = useRef(getCameraPreset(view).target.clone())
+  const isAnimating = useRef(true)
+
+  useEffect(() => {
+    const preset = getCameraPreset(view)
+    desiredPosition.current.copy(preset.position)
+    desiredTarget.current.copy(preset.target)
+    isAnimating.current = true
+  }, [view])
+
+  useFrame((_, delta) => {
+    if (!isAnimating.current) return
+
+    const controls = controlsRef.current
+    const lerpAlpha = 1 - Math.exp(-delta * 4.5)
+
+    camera.position.lerp(desiredPosition.current, lerpAlpha)
+
+    if (controls) {
+      controls.target.lerp(desiredTarget.current, lerpAlpha)
+      controls.update()
+
+      const posDone = camera.position.distanceTo(desiredPosition.current) < 0.08
+      const targetDone = controls.target.distanceTo(desiredTarget.current) < 0.08
+
+      if (posDone && targetDone) {
+        camera.position.copy(desiredPosition.current)
+        controls.target.copy(desiredTarget.current)
+        controls.update()
+        isAnimating.current = false
+      }
+    } else {
+      camera.lookAt(desiredTarget.current)
+      const posDone = camera.position.distanceTo(desiredPosition.current) < 0.08
+      if (posDone) {
+        camera.position.copy(desiredPosition.current)
+        camera.lookAt(desiredTarget.current)
+        isAnimating.current = false
+      }
+    }
+  })
+
+  return null
+}
+
+function SceneLights() {
   return (
-    <group position={[x, y, z]} rotation={rotation}>
-      <Line
-        points={pts}
-        color={color}
-        transparent
-        opacity={0.98}
-        lineWidth={2.6}
-      />
+    <>
+      <ambientLight intensity={0.8} />
+      <directionalLight position={[14, 24, 14]} intensity={1.18} />
+      <directionalLight position={[-10, 12, -12]} intensity={0.24} />
+      <pointLight position={[0, TOWER_H + 7, 0]} intensity={0.42} color="#85ffd6" />
+      <pointLight position={[0, 10, 10]} intensity={0.22} color="#75d6ff" />
+      <pointLight position={[0, 8, -10]} intensity={0.12} color="#8cf8e1" />
+    </>
+  )
+}
+
+function GroundPlane() {
+  return (
+    <group position={[0, -0.75, 0]} frustumCulled={false}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} frustumCulled={false}>
+        <planeGeometry args={[150, 150]} />
+        <meshStandardMaterial color="#050b13" roughness={0.95} metalness={0.05} />
+      </mesh>
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} frustumCulled={false}>
+        <ringGeometry args={[10, 18, 64]} />
+        <meshBasicMaterial color="#103447" transparent opacity={0.12} />
+      </mesh>
     </group>
   )
 }
 
-function AssetNode({
+function Podium() {
+  return (
+    <group position={[0, PODIUM_H / 2 - 0.55, 0]} frustumCulled={false}>
+      <RoundedBox args={[PODIUM_W, PODIUM_H, PODIUM_D]} radius={0.24} smoothness={4}>
+        <meshStandardMaterial
+          color="#081424"
+          roughness={0.5}
+          metalness={0.16}
+          emissive="#07111d"
+          emissiveIntensity={0.4}
+        />
+      </RoundedBox>
+
+      <mesh position={[0, PODIUM_H / 2 + 0.02, 0]}>
+        <boxGeometry args={[PODIUM_W - 0.8, 0.04, PODIUM_D - 0.8]} />
+        <meshBasicMaterial color="#1ec8a5" transparent opacity={0.18} />
+      </mesh>
+    </group>
+  )
+}
+
+function TowerCore() {
+  return (
+    <group position={[0, TOWER_H / 2 - 0.15, 0]} frustumCulled={false}>
+      <RoundedBox args={[CORE_W, TOWER_H - 0.4, CORE_D]} radius={0.18} smoothness={4}>
+        <meshStandardMaterial
+          color="#0b1726"
+          roughness={0.34}
+          metalness={0.3}
+          emissive="#0d2336"
+          emissiveIntensity={0.35}
+        />
+      </RoundedBox>
+
+      {Array.from({ length: FLOORS }, (_, i) => {
+        const y = floorY(i + 1) - (TOWER_H / 2 - 0.15) + 0.42
+        return (
+          <mesh key={i} position={[0, y, CORE_D / 2 + 0.02]}>
+            <boxGeometry args={[1.1, 0.04, 0.04]} />
+            <meshBasicMaterial color="#7ceccf" transparent opacity={0.12} />
+          </mesh>
+        )
+      })}
+    </group>
+  )
+}
+
+function RoofCrown() {
+  return (
+    <group position={[0, TOWER_H + 0.46, 0]} frustumCulled={false}>
+      <RoundedBox args={[TOWER_W + 0.2, 0.34, TOWER_D + 0.2]} radius={0.14} smoothness={4}>
+        <meshStandardMaterial
+          color="#0b1b2b"
+          roughness={0.26}
+          metalness={0.34}
+          emissive="#0b8f79"
+          emissiveIntensity={0.18}
+        />
+      </RoundedBox>
+
+      <mesh position={[0, 0.03, 0]}>
+        <boxGeometry args={[TOWER_W - 0.2, 0.02, TOWER_D - 0.2]} />
+        <meshBasicMaterial color="#8ef9d9" transparent opacity={0.28} />
+      </mesh>
+    </group>
+  )
+}
+
+function FacadeMullions() {
+  const mullionXs = [-4.3, -2.15, 0, 2.15, 4.3]
+
+  return (
+    <group position={[0, TOWER_H / 2 - 0.15, 0]} frustumCulled={false}>
+      {mullionXs.map((x, i) => (
+        <React.Fragment key={`front-${i}`}>
+          <mesh position={[x, 0, TOWER_D / 2 + 0.02]}>
+            <boxGeometry args={[0.05, TOWER_H - 0.1, 0.05]} />
+            <meshBasicMaterial color="#97f4df" transparent opacity={0.16} />
+          </mesh>
+
+          <mesh position={[x, 0, -TOWER_D / 2 - 0.02]}>
+            <boxGeometry args={[0.05, TOWER_H - 0.1, 0.05]} />
+            <meshBasicMaterial color="#97f4df" transparent opacity={0.07} />
+          </mesh>
+        </React.Fragment>
+      ))}
+
+      {[-2.5, 0, 2.5].map((z, i) => (
+        <React.Fragment key={`side-${i}`}>
+          <mesh position={[TOWER_W / 2 + 0.02, 0, z]}>
+            <boxGeometry args={[0.05, TOWER_H - 0.1, 0.05]} />
+            <meshBasicMaterial color="#97f4df" transparent opacity={0.08} />
+          </mesh>
+
+          <mesh position={[-TOWER_W / 2 - 0.02, 0, z]}>
+            <boxGeometry args={[0.05, TOWER_H - 0.1, 0.05]} />
+            <meshBasicMaterial color="#97f4df" transparent opacity={0.08} />
+          </mesh>
+        </React.Fragment>
+      ))}
+    </group>
+  )
+}
+
+function TowerShell() {
+  const shellHeight = TOWER_H + 0.18
+  const sideYOffset = shellHeight / 2 - 0.15
+
+  return (
+    <group frustumCulled={false}>
+      <group position={[0, sideYOffset, 0]}>
+        <mesh position={[-TOWER_W / 2 - 0.05, 0, 0]}>
+          <boxGeometry args={[0.12, shellHeight, TOWER_D + 0.15]} />
+          <meshPhysicalMaterial
+            color="#7fdcc9"
+            transparent
+            opacity={0.14}
+            transmission={0.18}
+            roughness={0.06}
+            metalness={0.02}
+            depthWrite={false}
+          />
+        </mesh>
+
+        <mesh position={[TOWER_W / 2 + 0.05, 0, 0]}>
+          <boxGeometry args={[0.12, shellHeight, TOWER_D + 0.15]} />
+          <meshPhysicalMaterial
+            color="#7fdcc9"
+            transparent
+            opacity={0.14}
+            transmission={0.18}
+            roughness={0.06}
+            metalness={0.02}
+            depthWrite={false}
+          />
+        </mesh>
+
+        <mesh position={[0, 0, -TOWER_D / 2 - 0.05]}>
+          <boxGeometry args={[TOWER_W + 0.15, shellHeight, 0.12]} />
+          <meshPhysicalMaterial
+            color="#7fdcc9"
+            transparent
+            opacity={0.12}
+            transmission={0.18}
+            roughness={0.06}
+            metalness={0.02}
+            depthWrite={false}
+          />
+        </mesh>
+      </group>
+
+      <mesh position={[0, TOWER_H + 0.02, 0]}>
+        <boxGeometry args={[TOWER_W + 0.2, 0.08, TOWER_D + 0.2]} />
+        <meshBasicMaterial color="#8ff9da" transparent opacity={0.18} />
+      </mesh>
+
+      <mesh position={[0, 0.02, 0]}>
+        <boxGeometry args={[TOWER_W + 0.2, 0.08, TOWER_D + 0.2]} />
+        <meshBasicMaterial color="#8ff9da" transparent opacity={0.08} />
+      </mesh>
+    </group>
+  )
+}
+
+function FloorDeck({
+  floor,
+  active,
+}: {
+  floor: number
+  active: boolean
+}) {
+  const y = floorY(floor)
+
+  return (
+    <group position={[0, y, 0]} frustumCulled={false}>
+      <mesh>
+        <boxGeometry args={[TOWER_W - 0.5, 0.12, TOWER_D - 0.38]} />
+        <meshStandardMaterial
+          color={active ? "#10281f" : "#0a131f"}
+          roughness={0.58}
+          metalness={0.16}
+          emissive={active ? "#1ba56c" : "#09121a"}
+          emissiveIntensity={active ? 0.22 : 0.08}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.09, 0]}>
+        <boxGeometry args={[TOWER_W - 0.9, 0.02, TOWER_D - 0.74]} />
+        <meshBasicMaterial
+          color={active ? "#83ffd2" : "#3d6c73"}
+          transparent
+          opacity={active ? 0.14 : 0.05}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.5, -TOWER_D / 2 + 0.16]}>
+        <boxGeometry args={[TOWER_W - 0.8, 1.02, 0.05]} />
+        <meshBasicMaterial color="#88ffe0" transparent opacity={active ? 0.08 : 0.04} />
+      </mesh>
+
+      <Text
+        position={[-TOWER_W / 2 - 0.72, 0.22, 0]}
+        fontSize={0.36}
+        color={active ? "#e9fff6" : "#88b7aa"}
+        rotation={[0, Math.PI / 2, 0]}
+        anchorX="center"
+        anchorY="middle"
+      >
+        {`F${floor}`}
+      </Text>
+    </group>
+  )
+}
+
+function FloorColumnLabels() {
+  return (
+    <group frustumCulled={false}>
+      {Array.from({ length: FLOORS }, (_, i) => {
+        const floor = i + 1
+        return (
+          <Text
+            key={floor}
+            position={[TOWER_W / 2 + 0.82, floorY(floor) + 0.18, 0]}
+            fontSize={0.24}
+            color="#7ba79b"
+            rotation={[0, -Math.PI / 2, 0]}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {`${floor}`}
+          </Text>
+        )
+      })}
+    </group>
+  )
+}
+
+function AnimatedStatusOrb({
+  color,
+  selected,
+  hovered,
+  onClick,
+  onPointerOver,
+  onPointerOut,
+}: {
+  color: string
+  selected: boolean
+  hovered: boolean
+  onClick: (e: any) => void
+  onPointerOver: (e: any) => void
+  onPointerOut: (e: any) => void
+}) {
+  const orbRef = useRef<THREE.Mesh | null>(null)
+  const glowRef = useRef<THREE.Mesh | null>(null)
+  const seed = useMemo(() => Math.random() * Math.PI * 2, [])
+
+  useFrame(({ clock }, delta) => {
+    const t = clock.getElapsedTime() + seed
+    const bob = Math.sin(t * 2.1) * 0.08
+    const scalePulse = 1 + Math.sin(t * 2.1) * 0.03
+
+    if (orbRef.current) {
+      orbRef.current.position.y = 0.6 + bob
+      orbRef.current.scale.setScalar(scalePulse)
+    }
+
+    if (glowRef.current) {
+      glowRef.current.position.y = 0.61 + bob
+      const glowScale = 1 + Math.sin(t * 2.1) * 0.05
+      glowRef.current.scale.setScalar(glowScale)
+
+      const material = glowRef.current.material as THREE.MeshBasicMaterial
+      const targetOpacity = selected ? 0.18 : hovered ? 0.12 : 0.08
+      material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, 1 - Math.exp(-delta * 6))
+    }
+  })
+
+  return (
+    <>
+      <mesh
+        ref={orbRef}
+        position={[0, 0.6, 0]}
+        renderOrder={40}
+        onClick={onClick}
+        onPointerOver={onPointerOver}
+        onPointerOut={onPointerOut}
+      >
+        <sphereGeometry args={[0.16, 28, 28]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={selected ? 1.2 : hovered ? 0.9 : 0.6}
+          roughness={0.14}
+          metalness={0.06}
+        />
+      </mesh>
+
+      <mesh ref={glowRef} position={[0, 0.61, 0]}>
+        <sphereGeometry args={[0.26, 28, 28]} />
+        <meshBasicMaterial color={color} transparent opacity={selected ? 0.16 : 0.08} />
+      </mesh>
+    </>
+  )
+}
+
+function AssetPod({
   asset,
   selected,
   onSelect,
@@ -283,96 +621,118 @@ function AssetNode({
   selected: boolean
   onSelect: (asset: Asset) => void
 }) {
-  const shaft = shafts[asset.shaftIndex]
-  const y = (asset.floor - 1) * FLOOR_H + 0.64
+  const y = floorY(asset.floor)
   const color = STATUS_COLORS[asset.status]
+  const [hovered, setHovered] = useState(false)
+  const showTooltip = hovered || selected
 
-  const [hovered, setHovered] = React.useState(false)
+  const openDetails = (e: any) => {
+    e.stopPropagation()
+    onSelect(asset)
+  }
 
-  const start = 0.7
-  const end = 5.6
-  const radius = shaft.r + 0.24
+  const onEnter = (e: any) => {
+    e.stopPropagation()
+    setHovered(true)
+    document.body.style.cursor = "pointer"
+  }
 
-  const showInfo = hovered || selected
+  const onLeave = (e: any) => {
+    e.stopPropagation()
+    setHovered(false)
+    document.body.style.cursor = "default"
+  }
 
   return (
-    <group position={[shaft.x, y, shaft.z]}>
-      <Arc
-        x={0}
-        y={0}
-        z={0}
-        radius={radius}
+    <group position={[asset.x, y + 0.16, asset.z]} frustumCulled={false}>
+      <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.13, 0]}>
+        <mesh
+          renderOrder={20}
+          onClick={openDetails}
+          onPointerOver={onEnter}
+          onPointerOut={onLeave}
+        >
+          <torusGeometry args={[0.9, 0.1, 24, 140]} />
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={selected ? 1 : hovered ? 0.78 : 0.5}
+            roughness={0.14}
+            metalness={0.42}
+          />
+        </mesh>
+
+        <mesh>
+          <torusGeometry args={[1.12, 0.028, 14, 100]} />
+          <meshBasicMaterial color={color} transparent opacity={selected ? 0.34 : 0.18} />
+        </mesh>
+
+        <mesh>
+          <ringGeometry args={[0.62, 0.78, 48]} />
+          <meshBasicMaterial color={color} transparent opacity={0.16} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+
+      <RoundedBox
+        args={[1.02, 0.34, 0.62]}
+        radius={0.07}
+        smoothness={4}
+        position={[0, 0.22, 0]}
+        onClick={openDetails}
+        onPointerOver={onEnter}
+        onPointerOut={onLeave}
+      >
+        <meshStandardMaterial
+          color="#070b10"
+          roughness={0.18}
+          metalness={0.42}
+          emissive="#0c1220"
+          emissiveIntensity={0.26}
+        />
+      </RoundedBox>
+
+      <AnimatedStatusOrb
         color={color}
-        start={start}
-        end={end}
-        rotation={[0, 0, 0]}
+        selected={selected}
+        hovered={hovered}
+        onClick={openDetails}
+        onPointerOver={onEnter}
+        onPointerOut={onLeave}
       />
 
       <mesh
-        rotation={[Math.PI / 2, 0, 0]}
-        onPointerOver={(e) => {
-          e.stopPropagation()
-          setHovered(true)
-          document.body.style.cursor = "pointer"
-        }}
-        onPointerOut={(e) => {
-          e.stopPropagation()
-          setHovered(false)
-          document.body.style.cursor = "default"
-        }}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect(asset)
-        }}
+        position={[0, 0.38, 0]}
+        onClick={openDetails}
+        onPointerOver={onEnter}
+        onPointerOut={onLeave}
       >
-        <torusGeometry args={[radius, 0.12, 12, 64, end - start]} />
+        <cylinderGeometry args={[1.22, 1.22, 1.45, 32]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
 
-      <mesh
-        position={[radius, 0.02, 0]}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect(asset)
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation()
-          setHovered(true)
-          document.body.style.cursor = "pointer"
-        }}
-        onPointerOut={() => {
-          setHovered(false)
-          document.body.style.cursor = "default"
-        }}
-      >
-        <sphereGeometry args={[0.07, 14, 14]} />
-        <meshBasicMaterial color={color} />
-      </mesh>
+      {selected && (
+        <>
+          <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.1, 0]}>
+            <mesh>
+              <torusGeometry args={[1.3, 0.04, 14, 90]} />
+              <meshBasicMaterial color={color} transparent opacity={0.34} />
+            </mesh>
+          </group>
 
-      {showInfo && (
-        <Html position={[0.9, 1.1, 0]} center>
-          <div className="min-w-[180px] rounded-2xl border border-cyan-500/20 bg-[#0b1226]/95 px-4 py-3 text-white shadow-2xl backdrop-blur-md">
-            <div className="text-[12px] font-semibold text-white">{asset.name}</div>
-            <div className="mt-1 text-[11px] uppercase tracking-[0.25em] text-cyan-300">
-              {asset.type}
+          <mesh position={[0, 0.92, 0]}>
+            <cylinderGeometry args={[0.014, 0.014, 0.62, 10]} />
+            <meshBasicMaterial color={color} transparent opacity={0.38} />
+          </mesh>
+        </>
+      )}
+
+      {showTooltip && (
+        <Html position={[0, 1.3, 0]} center distanceFactor={10}>
+          <div className="rounded-2xl border border-cyan-500/15 bg-[#091224]/95 px-3 py-2 text-[11px] text-white shadow-xl backdrop-blur-md">
+            <div className="font-medium">{asset.name}</div>
+            <div className="mt-1 text-[10px] text-slate-400">
+              {asset.type} • {asset.floor}F • {STATUS_LABELS[asset.status]}
             </div>
-            <div className="mt-2 flex items-center gap-2 text-[12px]">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: color }}
-              />
-              <span className="text-slate-300">
-                {asset.status === "OPERATIONAL"
-                  ? "Operational"
-                  : asset.status === "SCHEDULED_TASK"
-                  ? "Scheduled Task"
-                  : "Critical Alert"}
-              </span>
-            </div>
-            <div className="mt-2 text-[11px] text-slate-400">
-              {asset.floor}F · {asset.zone}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">{asset.building}</div>
           </div>
         </Html>
       )}
@@ -389,15 +749,24 @@ function Building3D({
   selectedAsset: Asset | null
   onSelectAsset: (asset: Asset | null) => void
 }) {
+  const selectedFloor = selectedAsset?.floor ?? null
+
   return (
-    <group onClick={() => onSelectAsset(null)}>
-      <OuterFrame />
-      <FloorFrames />
-      <VerticalFaceGrid />
-      <SideBracing />
-      <Shafts />
+    <group onClick={() => onSelectAsset(null)} frustumCulled={false}>
+      <GroundPlane />
+      <Podium />
+      <TowerShell />
+      <TowerCore />
+      <RoofCrown />
+      <FacadeMullions />
+      <FloorColumnLabels />
+
+      {Array.from({ length: FLOORS }, (_, i) => i + 1).map((floor) => (
+        <FloorDeck key={floor} floor={floor} active={selectedFloor === floor} />
+      ))}
+
       {assets.map((asset) => (
-        <AssetNode
+        <AssetPod
           key={asset.id}
           asset={asset}
           selected={selectedAsset?.id === asset.id}
@@ -408,74 +777,124 @@ function Building3D({
   )
 }
 
-function GroundGrid() {
+function AssetDetailsPanel({
+  asset,
+  onClose,
+}: {
+  asset: Asset | null
+  onClose: () => void
+}) {
+  if (!asset) return null
+
+  const color = STATUS_COLORS[asset.status]
+
   return (
-    <gridHelper
-      args={[120, 120, "#0b5a66", "#0b5a66"]}
-      position={[0, -0.01, 0]}
-    />
+    <div className="pointer-events-auto absolute right-6 top-24 w-[350px] rounded-[28px] border border-white/8 bg-[#071120]/90 p-5 shadow-2xl backdrop-blur-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
+            Asset Details
+          </div>
+          <h3 className="mt-2 text-[22px] font-semibold text-white">{asset.name}</h3>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="rounded-xl border border-slate-700/80 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500 hover:text-white"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-5 space-y-4 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: color }} />
+          <span className="text-slate-300">{STATUS_LABELS[asset.status]}</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-2xl bg-white/[0.04] p-3">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Type</div>
+            <div className="mt-1 text-white">{asset.type}</div>
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.04] p-3">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Floor</div>
+            <div className="mt-1 text-white">{asset.floor}F</div>
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.04] p-3">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Zone</div>
+            <div className="mt-1 text-white">{asset.zone}</div>
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.04] p-3">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+              Building
+            </div>
+            <div className="mt-1 text-white">{asset.building}</div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/[0.04] p-3">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Asset ID</div>
+          <div className="mt-1 break-all text-white">{asset.id}</div>
+        </div>
+      </div>
+    </div>
   )
 }
 
-function CameraController({
-  view,
-}: {
-  view: CameraView
-}) {
-  const { camera } = useThree()
+export default function MapPage() {
+  const { selectedSiteId } = useSiteStore()
+  const controlsRef = useRef<OrbitControlsImpl | null>(null)
 
-  React.useEffect(() => {
-    if (view === "default") {
-      camera.position.set(14, 14, 14)
-      camera.lookAt(0, H * 0.48, 0)
-    } else if (view === "top") {
-      camera.position.set(0, H + 12, 0.01)
-      camera.lookAt(0, H * 0.48, 0)
-    } else if (view === "left") {
-      camera.position.set(-16, H * 0.48, 0)
-      camera.lookAt(0, H * 0.48, 0)
-    } else if (view === "right") {
-      camera.position.set(16, H * 0.48, 0)
-      camera.lookAt(0, H * 0.48, 0)
-    } else if (view === "fit") {
-      camera.position.set(18, 18, 18)
-      camera.lookAt(0, H * 0.48, 0)
-    }
-  }, [camera, view])
-
-  return null
-}
-
-export default function DigitalTwinPage() {
   const [activeType, setActiveType] = useState<"All" | AssetType>("All")
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<AssetStatus | "ALL">("ALL")
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [cameraView, setCameraView] = useState<CameraView>("default")
+  const [assets, setAssets] = useState<Asset[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const [layers, setLayers] = useState({
-    workOrders: false,
-    reports: true,
-    maintenance: false,
-    floorHealth: false,
-    insights: false,
-  })
+  useEffect(() => {
+    const fetchAssets = async () => {
+      setLoading(true)
 
-  const allAssets = useMemo(() => makeAssets(), [])
+      try {
+        const params: Record<string, string | number> = { limit: 200 }
+        if (selectedSiteId) params.siteId = selectedSiteId
+
+        const res = await api.get("/assets", { params })
+        const mappedAssets = mapAssetsFromApi(res.data.data ?? [])
+        setAssets(mappedAssets)
+      } catch (err) {
+        console.error("Map assets fetch error:", err)
+        setAssets([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchAssets()
+  }, [selectedSiteId])
 
   const filteredAssets = useMemo(() => {
-    return allAssets.filter((asset) => {
+    return assets.filter((asset) => {
       const typeOk = activeType === "All" || asset.type === activeType
       const statusOk = statusFilter === "ALL" || asset.status === statusFilter
+      const q = search.toLowerCase().trim()
+
       const searchOk =
-        !search.trim() ||
-        asset.name.toLowerCase().includes(search.toLowerCase()) ||
-        asset.type.toLowerCase().includes(search.toLowerCase()) ||
-        asset.zone.toLowerCase().includes(search.toLowerCase())
+        !q ||
+        asset.name.toLowerCase().includes(q) ||
+        asset.type.toLowerCase().includes(q) ||
+        asset.zone.toLowerCase().includes(q) ||
+        asset.building.toLowerCase().includes(q)
 
       return typeOk && statusOk && searchOk
     })
-  }, [allAssets, activeType, statusFilter, search])
+  }, [assets, activeType, statusFilter, search])
 
   const buildingStatusCounts = useMemo(() => {
     return {
@@ -485,51 +904,72 @@ export default function DigitalTwinPage() {
     }
   }, [filteredAssets])
 
+  useEffect(() => {
+    if (!selectedAsset) return
+    const stillExists = filteredAssets.some((a) => a.id === selectedAsset.id)
+    if (!stillExists) setSelectedAsset(null)
+  }, [filteredAssets, selectedAsset])
+
+  if (loading) return <PageLoader />
+
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-[#020816] text-white">
+    <div className="relative h-screen w-full overflow-hidden bg-[#04111d] text-white">
       <div className="absolute inset-0">
-        <Canvas camera={{ position: [14, 14, 14], fov: 30 }}>
+        <Canvas
+          camera={{
+            position: [25, 17, 25],
+            fov: 34,
+            near: 0.1,
+            far: 700,
+          }}
+          gl={{ antialias: true }}
+          dpr={[1, 1.75]}
+        >
           <color attach="background" args={[BG]} />
-          <ambientLight intensity={1} />
-          <CameraController view={cameraView} />
-          <GroundGrid />
+
+          <SceneLights />
+          <CameraRig view={cameraView} controlsRef={controlsRef} />
+
           <Building3D
             assets={filteredAssets}
             selectedAsset={selectedAsset}
             onSelectAsset={setSelectedAsset}
           />
+
           <OrbitControls
-            enablePan
-            enableZoom
-            enableRotate
-            target={[0, H * 0.48, 0]}
-            minDistance={3}
-            maxDistance={80}
-            minPolarAngle={0.1}
-            maxPolarAngle={Math.PI - 0.1}
-            panSpeed={1.2}
-            zoomSpeed={1.2}
-            rotateSpeed={0.8}
+            ref={controlsRef}
+            target={[0, floorY(6), 0]}
+            minDistance={10}
+            maxDistance={220}
+            minPolarAngle={0.16}
+            maxPolarAngle={Math.PI / 2.02}
+            enablePan={false}
+            enableDamping
+            dampingFactor={0.08}
+            rotateSpeed={0.75}
+            zoomSpeed={0.85}
           />
         </Canvas>
       </div>
 
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(18,78,95,0.16),transparent_34%)]" />
+
       <div className="pointer-events-none absolute inset-0">
-        <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 px-5 py-4 shadow-2xl backdrop-blur-md">
+        <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-[28px] border border-white/8 bg-[#071120]/82 px-5 py-4 shadow-2xl backdrop-blur-xl">
           <div className="flex flex-wrap items-center gap-5">
-            <div className="text-[12px] font-semibold uppercase tracking-[0.25em] text-slate-400">
-              By Asset Type
+            <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">
+              Asset Type
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               {ASSET_TYPES.map((type) => (
                 <button
                   key={type}
                   onClick={() => setActiveType(type)}
                   className={`rounded-full px-4 py-2 text-sm transition ${
                     activeType === type
-                      ? "bg-emerald-500 text-white"
-                      : "text-slate-300 hover:text-white"
+                      ? "bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.25)]"
+                      : "bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
                   }`}
                 >
                   {type}
@@ -537,87 +977,48 @@ export default function DigitalTwinPage() {
               ))}
             </div>
 
-            <div className="ml-auto flex items-center gap-4">
-              <div className="text-[12px] font-semibold uppercase tracking-[0.25em] text-slate-400">
-                By Status
-              </div>
-
-              <button
-                onClick={() => setStatusFilter("OPERATIONAL")}
-                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
-                  statusFilter === "OPERATIONAL"
-                    ? "border-emerald-400 bg-emerald-500/15 text-emerald-400"
-                    : "border-slate-600 bg-transparent text-slate-400"
-                }`}
-                title="Operational"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+            <div className="ml-auto flex items-center gap-2">
+              {[
+                {
+                  key: "OPERATIONAL" as const,
+                  label: "Operational",
+                  dot: "bg-emerald-400",
+                  active: "border-emerald-400/50 bg-emerald-500/12 text-emerald-300",
+                },
+                {
+                  key: "SCHEDULED_TASK" as const,
+                  label: "Task",
+                  dot: "bg-yellow-400",
+                  active: "border-yellow-400/50 bg-yellow-500/12 text-yellow-300",
+                },
+                {
+                  key: "CRITICAL_ALERT" as const,
+                  label: "Critical",
+                  dot: "bg-red-400",
+                  active: "border-red-400/50 bg-red-500/12 text-red-300",
+                },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => setStatusFilter(item.key)}
+                  className={`flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition ${
+                    statusFilter === item.key
+                      ? item.active
+                      : "border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
+                  }`}
                 >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </button>
-
-              <button
-                onClick={() => setStatusFilter("SCHEDULED_TASK")}
-                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
-                  statusFilter === "SCHEDULED_TASK"
-                    ? "border-yellow-400 bg-yellow-500/15 text-yellow-400"
-                    : "border-slate-600 bg-transparent text-slate-400"
-                }`}
-                title="Scheduled Task"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </button>
-
-              <button
-                onClick={() => setStatusFilter("CRITICAL_ALERT")}
-                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
-                  statusFilter === "CRITICAL_ALERT"
-                    ? "border-red-400 bg-red-500/15 text-red-400"
-                    : "border-slate-600 bg-transparent text-slate-400"
-                }`}
-                title="Critical Alert"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="15" y1="9" x2="9" y2="15" />
-                  <line x1="9" y1="9" x2="15" y2="15" />
-                </svg>
-              </button>
+                  <span className={`h-2.5 w-2.5 rounded-full ${item.dot}`} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
 
               <button
                 onClick={() => setStatusFilter("ALL")}
-                className="rounded-full border border-slate-600 px-3 py-2 text-sm text-slate-300 hover:text-white"
+                className={`rounded-full border px-3 py-2 text-sm transition ${
+                  statusFilter === "ALL"
+                    ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
+                    : "border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
+                }`}
               >
                 Reset
               </button>
@@ -625,187 +1026,72 @@ export default function DigitalTwinPage() {
           </div>
         </div>
 
-        <div className="pointer-events-auto absolute left-6 top-24 w-[310px]">
-          <div className="rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
+        <div className="pointer-events-auto absolute left-6 top-24 w-[330px] space-y-4">
+          <div className="rounded-[28px] border border-white/8 bg-[#071120]/84 p-3 shadow-2xl backdrop-blur-xl">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search assets..."
-              className="w-full rounded-xl border border-cyan-500/10 bg-[#0b1630] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
+              placeholder="Search assets, floors, zones..."
+              className="w-full rounded-2xl border border-white/8 bg-[#09162a] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
             />
           </div>
 
-          <div className="mt-4 rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-3 shadow-2xl backdrop-blur-md">
-            <div className="mb-3 flex items-center gap-2">
-              {[
-                { icon: "👁", active: cameraView === "default", value: "default" as const },
-                { icon: "↑", active: cameraView === "top", value: "top" as const },
-                { icon: "←", active: cameraView === "left", value: "left" as const },
-                { icon: "→", active: cameraView === "right", value: "right" as const },
-                { icon: "⤢", active: cameraView === "fit", value: "fit" as const },
-              ].map((item, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCameraView(item.value)}
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl border transition ${
-                    item.active
-                      ? "border-emerald-400 bg-emerald-500/15 text-emerald-300"
-                      : "border-slate-700 bg-[#0b1630] text-slate-400 hover:text-white"
-                  }`}
-                >
-                  <span className="text-sm">{item.icon}</span>
-                </button>
-              ))}
+          <div className="rounded-[28px] border border-white/8 bg-[#071120]/84 p-4 shadow-2xl backdrop-blur-xl">
+            <div className="mb-4 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+              Building Status
             </div>
 
-            <div className="rounded-2xl border border-cyan-500/10 bg-[#0b1630] p-4">
-              <div className="mb-4 text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
-                Building Status
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
+                <span className="h-3.5 w-3.5 rounded-full bg-emerald-400" />
+                <span className="text-white">All Clear</span>
+                <span className="ml-auto text-slate-400">{buildingStatusCounts.ok}</span>
               </div>
 
-              <div className="space-y-3 text-lg">
-                <div className="flex items-center gap-3">
-                  <span className="h-3.5 w-3.5 rounded-full bg-emerald-400" />
-                  <span className="text-white">All Clear</span>
-                  <span className="ml-auto text-slate-400">{buildingStatusCounts.ok}</span>
-                </div>
+              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
+                <span className="h-3.5 w-3.5 rounded-full bg-yellow-400" />
+                <span className="text-white">Scheduled Task</span>
+                <span className="ml-auto text-slate-400">{buildingStatusCounts.warn}</span>
+              </div>
 
-                <div className="flex items-center gap-3">
-                  <span className="h-3.5 w-3.5 rounded-full bg-yellow-400" />
-                  <span className="text-white">Scheduled Task</span>
-                  <span className="ml-auto text-slate-400">{buildingStatusCounts.warn}</span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="h-3.5 w-3.5 rounded-full bg-red-400" />
-                  <span className="text-white">Critical Alert</span>
-                  <span className="ml-auto text-slate-400">{buildingStatusCounts.err}</span>
-                </div>
+              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
+                <span className="h-3.5 w-3.5 rounded-full bg-red-400" />
+                <span className="text-white">Critical Alert</span>
+                <span className="ml-auto text-slate-400">{buildingStatusCounts.err}</span>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div className="pointer-events-auto absolute right-6 top-24 w-[220px] rounded-2xl border border-cyan-500/10 bg-[#081127]/90 p-4 shadow-2xl backdrop-blur-md">
-          <div className="mb-4 text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">
-            Layers
-          </div>
+            <div className="mt-5">
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                Camera
+              </div>
 
-          <div className="space-y-2">
-            {[
-              { key: "workOrders", label: "Work Orders" },
-              { key: "reports", label: "Reports" },
-              { key: "maintenance", label: "Today's Maint." },
-              { key: "floorHealth", label: "Floor Health" },
-              { key: "insights", label: "Insights" },
-            ].map((item) => {
-              const active = layers[item.key as keyof typeof layers]
-
-              return (
-                <button
-                  key={item.key}
-                  onClick={() =>
-                    setLayers((prev) => ({
-                      ...prev,
-                      [item.key]: !prev[item.key as keyof typeof prev],
-                    }))
-                  }
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left transition ${
-                    active
-                      ? "bg-red-500/15 text-red-300"
-                      : "bg-transparent text-slate-400 hover:bg-white/5"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    {item.key === "workOrders" && (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                      </svg>
-                    )}
-                    {item.key === "reports" && (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                        <line x1="12" y1="9" x2="12" y2="13" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                      </svg>
-                    )}
-                    {item.key === "maintenance" && (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                        <line x1="16" y1="2" x2="16" y2="6" />
-                        <line x1="8" y1="2" x2="8" y2="6" />
-                        <line x1="3" y1="10" x2="21" y2="10" />
-                      </svg>
-                    )}
-                    {item.key === "floorHealth" && (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                      </svg>
-                    )}
-                    {item.key === "insights" && (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="18" y1="20" x2="18" y2="10" />
-                        <line x1="12" y1="20" x2="12" y2="4" />
-                        <line x1="6" y1="20" x2="6" y2="14" />
-                      </svg>
-                    )}
-                    {item.label}
-                  </span>
-                  <span
-                    className={`h-2.5 w-2.5 rounded-full ${
-                      active ? "bg-red-400" : "bg-slate-700"
+              <div className="grid grid-cols-5 gap-2">
+                {[
+                  { icon: "👁", value: "default" as const },
+                  { icon: "↑", value: "top" as const },
+                  { icon: "←", value: "left" as const },
+                  { icon: "→", value: "right" as const },
+                  { icon: "⤢", value: "fit" as const },
+                ].map((item, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setCameraView(item.value)}
+                    className={`flex h-11 items-center justify-center rounded-2xl border transition ${
+                      cameraView === item.value
+                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-300"
+                        : "border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-white"
                     }`}
-                  />
-                </button>
-              )
-            })}
+                  >
+                    <span className="text-sm">{item.icon}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
+
+        <AssetDetailsPanel asset={selectedAsset} onClose={() => setSelectedAsset(null)} />
       </div>
     </div>
   )
