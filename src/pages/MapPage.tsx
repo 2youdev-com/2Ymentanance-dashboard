@@ -28,6 +28,7 @@ type Asset = {
   type: AssetType
   status: AssetStatus
   floor: number
+  floorLabel: string
   zone: string
   building: string
   slotIndex: number
@@ -45,10 +46,23 @@ type ApiAsset = {
   building?: string | null
 }
 
+type Site = {
+  id: string
+  name: string
+}
+
 type CameraView = "default" | "top" | "left" | "right" | "fit"
 
-const FLOORS = 12
-const FLOOR_GAP = 2.75
+const FLOOR_LABELS = [
+  "Basement 2",
+  "Basement 1",
+  "Ground Floor",
+  ...Array.from({ length: 15 }, (_, i) => `Floor ${i + 1}`),
+  "Rooftop",
+]
+
+const FLOORS = FLOOR_LABELS.length
+const FLOOR_GAP = 2.55
 
 const TOWER_W = 11.6
 const TOWER_D = 7.6
@@ -136,31 +150,48 @@ function mapApiType(type: string): AssetType {
   }
 }
 
+function normalizeFloorLabel(value: string) {
+  return value.toLowerCase().trim().replace(/\s+/g, " ")
+}
+
 function parseFloorValue(floor: string | number | null | undefined): number {
   if (typeof floor === "number" && !Number.isNaN(floor)) {
-    return Math.min(Math.max(Math.floor(floor), 1), FLOORS)
+    const numeric = Math.floor(floor)
+    if (numeric <= 0) return 1
+    if (numeric > 15) return FLOORS
+    return Math.min(Math.max(numeric + 3, 1), FLOORS)
   }
 
-  if (!floor) return 1
+  if (!floor) return 3
 
-  const value = String(floor).toLowerCase().trim()
+  const value = normalizeFloorLabel(String(floor))
 
-  if (value.includes("ground")) return 1
-  if (value.includes("basement")) return 1
+  const directIndex = FLOOR_LABELS.findIndex(
+    (label) => normalizeFloorLabel(label) === value
+  )
+  if (directIndex !== -1) return directIndex + 1
+
+  if (value.includes("basement 2") || value.includes("b2")) return 1
+  if (value.includes("basement 1") || value.includes("b1")) return 2
+  if (value.includes("ground")) return 3
   if (value.includes("roof")) return FLOORS
 
   const match = value.match(/\d+/)
   if (match) {
-    const num = Number(match[0])
-    if (!Number.isNaN(num)) {
-      return Math.min(Math.max(num, 1), FLOORS)
+    const floorNum = Number(match[0])
+    if (!Number.isNaN(floorNum)) {
+      return Math.min(Math.max(floorNum + 3, 1), FLOORS)
     }
   }
 
-  return 1
+  return 3
 }
 
-function mapAssetsFromApi(apiAssets: ApiAsset[]): Asset[] {
+function floorLabelFromIndex(index: number) {
+  return FLOOR_LABELS[index - 1] ?? "Ground Floor"
+}
+
+function mapAssetsFromApi(apiAssets: ApiAsset[], fallbackBuilding: string): Asset[] {
   const floorCounters: Record<number, number> = {}
 
   return [...apiAssets]
@@ -179,8 +210,9 @@ function mapAssetsFromApi(apiAssets: ApiAsset[]): Asset[] {
         type: mapApiType(asset.type),
         status: mapApiStatus(asset.status),
         floor: floorNumber,
+        floorLabel: floorLabelFromIndex(floorNumber),
         zone: asset.zone || `Zone ${currentCount + 1}`,
-        building: asset.building || "Tower",
+        building: asset.building || fallbackBuilding,
         slotIndex,
         x: slot.x,
         z: slot.z,
@@ -193,32 +225,32 @@ function floorY(floor: number) {
 }
 
 function getCameraPreset(view: CameraView) {
-  const centerY = floorY(6)
+  const centerY = floorY(Math.ceil(FLOORS / 2))
 
   switch (view) {
     case "top":
       return {
-        position: new THREE.Vector3(0, 52, 0.01),
+        position: new THREE.Vector3(0, 64, 0.01),
         target: new THREE.Vector3(0, centerY, 0),
       }
     case "left":
       return {
-        position: new THREE.Vector3(-29, centerY + 3, 0),
+        position: new THREE.Vector3(-33, centerY + 5, 0),
         target: new THREE.Vector3(0, centerY, 0),
       }
     case "right":
       return {
-        position: new THREE.Vector3(29, centerY + 3, 0),
+        position: new THREE.Vector3(33, centerY + 5, 0),
         target: new THREE.Vector3(0, centerY, 0),
       }
     case "fit":
       return {
-        position: new THREE.Vector3(34, 24, 32),
+        position: new THREE.Vector3(38, 30, 36),
         target: new THREE.Vector3(0, centerY, 0),
       }
     default:
       return {
-        position: new THREE.Vector3(25, 17, 25),
+        position: new THREE.Vector3(26, 22, 28),
         target: new THREE.Vector3(0, centerY, 0),
       }
   }
@@ -232,48 +264,16 @@ function CameraRig({
   controlsRef: React.RefObject<OrbitControlsImpl | null>
 }) {
   const { camera } = useThree()
-  const desiredPosition = useRef(getCameraPreset(view).position.clone())
-  const desiredTarget = useRef(getCameraPreset(view).target.clone())
-  const isAnimating = useRef(true)
 
   useEffect(() => {
-    const preset = getCameraPreset(view)
-    desiredPosition.current.copy(preset.position)
-    desiredTarget.current.copy(preset.target)
-    isAnimating.current = true
-  }, [view])
-
-  useFrame((_, delta) => {
-    if (!isAnimating.current) return
-
     const controls = controlsRef.current
-    const lerpAlpha = 1 - Math.exp(-delta * 4.5)
+    if (!controls) return
 
-    camera.position.lerp(desiredPosition.current, lerpAlpha)
-
-    if (controls) {
-      controls.target.lerp(desiredTarget.current, lerpAlpha)
-      controls.update()
-
-      const posDone = camera.position.distanceTo(desiredPosition.current) < 0.08
-      const targetDone = controls.target.distanceTo(desiredTarget.current) < 0.08
-
-      if (posDone && targetDone) {
-        camera.position.copy(desiredPosition.current)
-        controls.target.copy(desiredTarget.current)
-        controls.update()
-        isAnimating.current = false
-      }
-    } else {
-      camera.lookAt(desiredTarget.current)
-      const posDone = camera.position.distanceTo(desiredPosition.current) < 0.08
-      if (posDone) {
-        camera.position.copy(desiredPosition.current)
-        camera.lookAt(desiredTarget.current)
-        isAnimating.current = false
-      }
-    }
-  })
+    const preset = getCameraPreset(view)
+    camera.position.copy(preset.position)
+    controls.target.copy(preset.target)
+    controls.update()
+  }, [view, camera, controlsRef])
 
   return null
 }
@@ -281,12 +281,12 @@ function CameraRig({
 function SceneLights() {
   return (
     <>
-      <ambientLight intensity={0.8} />
-      <directionalLight position={[14, 24, 14]} intensity={1.18} />
-      <directionalLight position={[-10, 12, -12]} intensity={0.24} />
-      <pointLight position={[0, TOWER_H + 7, 0]} intensity={0.42} color="#85ffd6" />
-      <pointLight position={[0, 10, 10]} intensity={0.22} color="#75d6ff" />
-      <pointLight position={[0, 8, -10]} intensity={0.12} color="#8cf8e1" />
+      <ambientLight intensity={0.86} />
+      <directionalLight position={[14, 24, 14]} intensity={1.2} />
+      <directionalLight position={[-10, 12, -12]} intensity={0.28} />
+      <pointLight position={[0, TOWER_H + 7, 0]} intensity={0.46} color="#85ffd6" />
+      <pointLight position={[0, 10, 10]} intensity={0.26} color="#75d6ff" />
+      <pointLight position={[0, 8, -10]} intensity={0.15} color="#8cf8e1" />
     </>
   )
 }
@@ -295,12 +295,12 @@ function GroundPlane() {
   return (
     <group position={[0, -0.75, 0]} frustumCulled={false}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} frustumCulled={false}>
-        <planeGeometry args={[150, 150]} />
+        <planeGeometry args={[180, 180]} />
         <meshStandardMaterial color="#050b13" roughness={0.95} metalness={0.05} />
       </mesh>
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} frustumCulled={false}>
-        <ringGeometry args={[10, 18, 64]} />
+        <ringGeometry args={[12, 22, 64]} />
         <meshBasicMaterial color="#103447" transparent opacity={0.12} />
       </mesh>
     </group>
@@ -508,14 +508,15 @@ function FloorDeck({
       </mesh>
 
       <Text
-        position={[-TOWER_W / 2 - 0.72, 0.22, 0]}
-        fontSize={0.36}
+        position={[-TOWER_W / 2 - 1.05, 0.22, 0]}
+        fontSize={0.25}
         color={active ? "#e9fff6" : "#88b7aa"}
         rotation={[0, Math.PI / 2, 0]}
         anchorX="center"
         anchorY="middle"
+        maxWidth={6}
       >
-        {`F${floor}`}
+        {floorLabelFromIndex(floor)}
       </Text>
     </group>
   )
@@ -529,14 +530,15 @@ function FloorColumnLabels() {
         return (
           <Text
             key={floor}
-            position={[TOWER_W / 2 + 0.82, floorY(floor) + 0.18, 0]}
-            fontSize={0.24}
+            position={[TOWER_W / 2 + 1.05, floorY(floor) + 0.18, 0]}
+            fontSize={0.18}
             color="#7ba79b"
             rotation={[0, -Math.PI / 2, 0]}
             anchorX="center"
             anchorY="middle"
+            maxWidth={6}
           >
-            {`${floor}`}
+            {floorLabelFromIndex(floor)}
           </Text>
         )
       })}
@@ -646,12 +648,7 @@ function AssetPod({
   return (
     <group position={[asset.x, y + 0.16, asset.z]} frustumCulled={false}>
       <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.13, 0]}>
-        <mesh
-          renderOrder={20}
-          onClick={openDetails}
-          onPointerOver={onEnter}
-          onPointerOut={onLeave}
-        >
+        <mesh renderOrder={20} onClick={openDetails} onPointerOver={onEnter} onPointerOut={onLeave}>
           <torusGeometry args={[0.9, 0.1, 24, 140]} />
           <meshStandardMaterial
             color={color}
@@ -700,38 +697,17 @@ function AssetPod({
         onPointerOut={onLeave}
       />
 
-      <mesh
-        position={[0, 0.38, 0]}
-        onClick={openDetails}
-        onPointerOver={onEnter}
-        onPointerOut={onLeave}
-      >
+      <mesh position={[0, 0.38, 0]} onClick={openDetails} onPointerOver={onEnter} onPointerOut={onLeave}>
         <cylinderGeometry args={[1.22, 1.22, 1.45, 32]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
-
-      {selected && (
-        <>
-          <group rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.1, 0]}>
-            <mesh>
-              <torusGeometry args={[1.3, 0.04, 14, 90]} />
-              <meshBasicMaterial color={color} transparent opacity={0.34} />
-            </mesh>
-          </group>
-
-          <mesh position={[0, 0.92, 0]}>
-            <cylinderGeometry args={[0.014, 0.014, 0.62, 10]} />
-            <meshBasicMaterial color={color} transparent opacity={0.38} />
-          </mesh>
-        </>
-      )}
 
       {showTooltip && (
         <Html position={[0, 1.3, 0]} center distanceFactor={10}>
           <div className="rounded-2xl border border-cyan-500/15 bg-[#091224]/95 px-3 py-2 text-[11px] text-white shadow-xl backdrop-blur-md">
             <div className="font-medium">{asset.name}</div>
             <div className="mt-1 text-[10px] text-slate-400">
-              {asset.type} • {asset.floor}F • {STATUS_LABELS[asset.status]}
+              {asset.type} • {asset.floorLabel} • {STATUS_LABELS[asset.status]}
             </div>
           </div>
         </Html>
@@ -752,7 +728,12 @@ function Building3D({
   const selectedFloor = selectedAsset?.floor ?? null
 
   return (
-    <group onClick={() => onSelectAsset(null)} frustumCulled={false}>
+    <group
+      onClick={() => onSelectAsset(null)}
+      frustumCulled={false}
+      position={[8, -1.2, 0]}
+      scale={[1.26, 1.26, 1.26]}
+    >
       <GroundPlane />
       <Podium />
       <TowerShell />
@@ -789,56 +770,58 @@ function AssetDetailsPanel({
   const color = STATUS_COLORS[asset.status]
 
   return (
-    <div className="pointer-events-auto absolute right-6 top-24 w-[350px] rounded-[28px] border border-white/8 bg-[#071120]/90 p-5 shadow-2xl backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
-            Asset Details
-          </div>
-          <h3 className="mt-2 text-[22px] font-semibold text-white">{asset.name}</h3>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="rounded-xl border border-slate-700/80 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500 hover:text-white"
-        >
-          Close
-        </button>
-      </div>
-
-      <div className="mt-5 space-y-4 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: color }} />
-          <span className="text-slate-300">{STATUS_LABELS[asset.status]}</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-2xl bg-white/[0.04] p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Type</div>
-            <div className="mt-1 text-white">{asset.type}</div>
-          </div>
-
-          <div className="rounded-2xl bg-white/[0.04] p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Floor</div>
-            <div className="mt-1 text-white">{asset.floor}F</div>
-          </div>
-
-          <div className="rounded-2xl bg-white/[0.04] p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Zone</div>
-            <div className="mt-1 text-white">{asset.zone}</div>
-          </div>
-
-          <div className="rounded-2xl bg-white/[0.04] p-3">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-              Building
+    <div className="pointer-events-auto absolute right-6 top-[330px] bottom-6 w-[390px]">
+      <div className="h-full overflow-auto rounded-[32px] border border-white/10 bg-[#071120]/94 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.34)] backdrop-blur-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
+              Asset Details
             </div>
-            <div className="mt-1 text-white">{asset.building}</div>
+            <h3 className="mt-3 text-[22px] font-semibold text-white break-words leading-snug">
+              {asset.name}
+            </h3>
           </div>
+
+          <button
+            onClick={onClose}
+            className="shrink-0 rounded-xl border border-slate-700/80 px-3 py-2 text-xs text-slate-300 transition hover:border-slate-500 hover:text-white"
+          >
+            Close
+          </button>
         </div>
 
-        <div className="rounded-2xl bg-white/[0.04] p-3">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Asset ID</div>
-          <div className="mt-1 break-all text-white">{asset.id}</div>
+        <div className="mt-6 space-y-4 text-sm">
+          <div className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-4 py-3.5">
+            <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: color }} />
+            <span className="text-slate-100">{STATUS_LABELS[asset.status]}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-white/[0.05] p-4 min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Type</div>
+              <div className="mt-2 text-white break-words">{asset.type}</div>
+            </div>
+
+            <div className="rounded-2xl bg-white/[0.05] p-4 min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Floor</div>
+              <div className="mt-2 text-white break-words">{asset.floorLabel}</div>
+            </div>
+
+            <div className="rounded-2xl bg-white/[0.05] p-4 min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Zone</div>
+              <div className="mt-2 text-white break-words">{asset.zone}</div>
+            </div>
+
+            <div className="rounded-2xl bg-white/[0.05] p-4 min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Building</div>
+              <div className="mt-2 text-white break-words">{asset.building}</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.05] p-4">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Asset ID</div>
+            <div className="mt-2 break-all text-white">{asset.id}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -846,9 +829,12 @@ function AssetDetailsPanel({
 }
 
 export default function MapPage() {
-  const { selectedSiteId } = useSiteStore()
+  const siteStore = useSiteStore()
+  const storeSelectedSiteId = siteStore.selectedSiteId
   const controlsRef = useRef<OrbitControlsImpl | null>(null)
 
+  const [sites, setSites] = useState<Site[]>([])
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(storeSelectedSiteId || "")
   const [activeType, setActiveType] = useState<"All" | AssetType>("All")
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<AssetStatus | "ALL">("ALL")
@@ -856,6 +842,34 @@ export default function MapPage() {
   const [cameraView, setCameraView] = useState<CameraView>("default")
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchSites = async () => {
+      try {
+        const res = await api.get("/sites")
+        const data = res.data.data ?? []
+        setSites(data)
+
+        if (!selectedSiteId && data.length > 0) {
+          setSelectedSiteId(data[0].id)
+        }
+      } catch (err) {
+        console.error("Sites fetch error:", err)
+      }
+    }
+
+    fetchSites()
+  }, [])
+
+  useEffect(() => {
+    if (storeSelectedSiteId && storeSelectedSiteId !== selectedSiteId) {
+      setSelectedSiteId(storeSelectedSiteId)
+    }
+  }, [storeSelectedSiteId, selectedSiteId])
+
+  const selectedSiteName = useMemo(() => {
+    return sites.find((site) => site.id === selectedSiteId)?.name ?? "Site"
+  }, [sites, selectedSiteId])
 
   useEffect(() => {
     const fetchAssets = async () => {
@@ -866,7 +880,7 @@ export default function MapPage() {
         if (selectedSiteId) params.siteId = selectedSiteId
 
         const res = await api.get("/assets", { params })
-        const mappedAssets = mapAssetsFromApi(res.data.data ?? [])
+        const mappedAssets = mapAssetsFromApi(res.data.data ?? [], selectedSiteName)
         setAssets(mappedAssets)
       } catch (err) {
         console.error("Map assets fetch error:", err)
@@ -877,7 +891,7 @@ export default function MapPage() {
     }
 
     fetchAssets()
-  }, [selectedSiteId])
+  }, [selectedSiteId, selectedSiteName])
 
   const filteredAssets = useMemo(() => {
     return assets.filter((asset) => {
@@ -890,7 +904,8 @@ export default function MapPage() {
         asset.name.toLowerCase().includes(q) ||
         asset.type.toLowerCase().includes(q) ||
         asset.zone.toLowerCase().includes(q) ||
-        asset.building.toLowerCase().includes(q)
+        asset.building.toLowerCase().includes(q) ||
+        asset.floorLabel.toLowerCase().includes(q)
 
       return typeOk && statusOk && searchOk
     })
@@ -917,16 +932,15 @@ export default function MapPage() {
       <div className="absolute inset-0">
         <Canvas
           camera={{
-            position: [25, 17, 25],
+            position: [26, 22, 28],
             fov: 34,
             near: 0.1,
-            far: 700,
+            far: 900,
           }}
           gl={{ antialias: true }}
           dpr={[1, 1.75]}
         >
           <color attach="background" args={[BG]} />
-
           <SceneLights />
           <CameraRig view={cameraView} controlsRef={controlsRef} />
 
@@ -938,16 +952,18 @@ export default function MapPage() {
 
           <OrbitControls
             ref={controlsRef}
-            target={[0, floorY(6), 0]}
-            minDistance={10}
-            maxDistance={220}
-            minPolarAngle={0.16}
-            maxPolarAngle={Math.PI / 2.02}
-            enablePan={false}
+            target={[8, floorY(Math.ceil(FLOORS / 2)), 0]}
+            minDistance={4}
+            maxDistance={320}
+            minPolarAngle={0}
+            maxPolarAngle={Math.PI}
+            enablePan
+            screenSpacePanning
             enableDamping
-            dampingFactor={0.08}
-            rotateSpeed={0.75}
-            zoomSpeed={0.85}
+            dampingFactor={0.06}
+            rotateSpeed={0.9}
+            zoomSpeed={1.15}
+            panSpeed={1.1}
           />
         </Canvas>
       </div>
@@ -955,138 +971,172 @@ export default function MapPage() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(18,78,95,0.16),transparent_34%)]" />
 
       <div className="pointer-events-none absolute inset-0">
-        <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-[28px] border border-white/8 bg-[#071120]/82 px-5 py-4 shadow-2xl backdrop-blur-xl">
-          <div className="flex flex-wrap items-center gap-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">
-              Asset Type
-            </div>
+        <div className="pointer-events-auto absolute left-6 right-6 top-4 rounded-[30px] border border-white/10 bg-[#071120]/85 px-6 py-5 shadow-[0_20px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+          <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+            <div>
+              <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+                <div>
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                    Site
+                  </div>
+                  <select
+                    value={selectedSiteId}
+                    onChange={(e) => {
+                      setSelectedSiteId(e.target.value)
+                      setSelectedAsset(null)
+                    }}
+                    className="w-full rounded-2xl border border-white/10 bg-[#09162a] px-4 py-3 text-sm text-white outline-none"
+                  >
+                    {sites.map((site) => (
+                      <option key={site.id} value={site.id} className="bg-[#09162a] text-white">
+                        {site.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {ASSET_TYPES.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setActiveType(type)}
-                  className={`rounded-full px-4 py-2 text-sm transition ${
-                    activeType === type
-                      ? "bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.25)]"
-                      : "bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
-                  }`}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
+                <div>
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                    Asset Type
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {ASSET_TYPES.map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setActiveType(type)}
+                        className={`rounded-full px-4 py-2.5 text-sm transition ${
+                          activeType === type
+                            ? "bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.25)]"
+                            : "bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] hover:text-white"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
 
-            <div className="ml-auto flex items-center gap-2">
-              {[
-                {
-                  key: "OPERATIONAL" as const,
-                  label: "Operational",
-                  dot: "bg-emerald-400",
-                  active: "border-emerald-400/50 bg-emerald-500/12 text-emerald-300",
-                },
-                {
-                  key: "SCHEDULED_TASK" as const,
-                  label: "Task",
-                  dot: "bg-yellow-400",
-                  active: "border-yellow-400/50 bg-yellow-500/12 text-yellow-300",
-                },
-                {
-                  key: "CRITICAL_ALERT" as const,
-                  label: "Critical",
-                  dot: "bg-red-400",
-                  active: "border-red-400/50 bg-red-500/12 text-red-300",
-                },
-              ].map((item) => (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {[
+                  {
+                    key: "OPERATIONAL" as const,
+                    label: "Operational",
+                    dot: "bg-emerald-400",
+                    active: "border-emerald-400/50 bg-emerald-500/12 text-emerald-300",
+                  },
+                  {
+                    key: "SCHEDULED_TASK" as const,
+                    label: "Task",
+                    dot: "bg-yellow-400",
+                    active: "border-yellow-400/50 bg-yellow-500/12 text-yellow-300",
+                  },
+                  {
+                    key: "CRITICAL_ALERT" as const,
+                    label: "Critical",
+                    dot: "bg-red-400",
+                    active: "border-red-400/50 bg-red-500/12 text-red-300",
+                  },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    onClick={() => setStatusFilter(item.key)}
+                    className={`flex items-center gap-2 rounded-full border px-3.5 py-2.5 text-sm transition ${
+                      statusFilter === item.key
+                        ? item.active
+                        : "border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
+                    }`}
+                  >
+                    <span className={`h-2.5 w-2.5 rounded-full ${item.dot}`} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+
                 <button
-                  key={item.key}
-                  onClick={() => setStatusFilter(item.key)}
-                  className={`flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition ${
-                    statusFilter === item.key
-                      ? item.active
+                  onClick={() => setStatusFilter("ALL")}
+                  className={`rounded-full border px-3.5 py-2.5 text-sm transition ${
+                    statusFilter === "ALL"
+                      ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
                       : "border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
                   }`}
                 >
-                  <span className={`h-2.5 w-2.5 rounded-full ${item.dot}`} />
-                  <span>{item.label}</span>
+                  Reset
                 </button>
-              ))}
+              </div>
+            </div>
 
-              <button
-                onClick={() => setStatusFilter("ALL")}
-                className={`rounded-full border px-3 py-2 text-sm transition ${
-                  statusFilter === "ALL"
-                    ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
-                    : "border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05] hover:text-white"
-                }`}
-              >
-                Reset
-              </button>
+            <div className="xl:pl-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                Building Status
+              </div>
+
+              <div className="mt-3 space-y-3">
+                <div className="rounded-2xl border border-white/6 bg-white/[0.035] px-4 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <span className="h-3.5 w-3.5 rounded-full bg-emerald-400" />
+                    <span className="text-sm text-white">All Clear</span>
+                    <span className="ml-auto text-sm text-slate-400">{buildingStatusCounts.ok}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/6 bg-white/[0.035] px-4 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <span className="h-3.5 w-3.5 rounded-full bg-yellow-400" />
+                    <span className="text-sm text-white">Scheduled Task</span>
+                    <span className="ml-auto text-sm text-slate-400">{buildingStatusCounts.warn}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/6 bg-white/[0.035] px-4 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <span className="h-3.5 w-3.5 rounded-full bg-red-400" />
+                    <span className="text-sm text-white">Critical Alert</span>
+                    <span className="ml-auto text-sm text-slate-400">{buildingStatusCounts.err}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="pointer-events-auto absolute left-6 top-24 w-[330px] space-y-4">
-          <div className="rounded-[28px] border border-white/8 bg-[#071120]/84 p-3 shadow-2xl backdrop-blur-xl">
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search assets, floors, zones..."
-              className="w-full rounded-2xl border border-white/8 bg-[#09162a] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
-            />
-          </div>
-
-          <div className="rounded-[28px] border border-white/8 bg-[#071120]/84 p-4 shadow-2xl backdrop-blur-xl">
-            <div className="mb-4 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-              Building Status
+        <div className="pointer-events-auto absolute left-6 top-[280px] w-[360px]">
+          <div className="rounded-[30px] border border-white/10 bg-[#071120]/86 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+              Camera
             </div>
 
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
-                <span className="h-3.5 w-3.5 rounded-full bg-emerald-400" />
-                <span className="text-white">All Clear</span>
-                <span className="ml-auto text-slate-400">{buildingStatusCounts.ok}</span>
-              </div>
-
-              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
-                <span className="h-3.5 w-3.5 rounded-full bg-yellow-400" />
-                <span className="text-white">Scheduled Task</span>
-                <span className="ml-auto text-slate-400">{buildingStatusCounts.warn}</span>
-              </div>
-
-              <div className="flex items-center gap-3 rounded-2xl bg-white/[0.03] px-3 py-3">
-                <span className="h-3.5 w-3.5 rounded-full bg-red-400" />
-                <span className="text-white">Critical Alert</span>
-                <span className="ml-auto text-slate-400">{buildingStatusCounts.err}</span>
-              </div>
+            <div className="mt-3 grid grid-cols-5 gap-2">
+              {[
+                { icon: "👁", value: "default" as const },
+                { icon: "↑", value: "top" as const },
+                { icon: "←", value: "left" as const },
+                { icon: "→", value: "right" as const },
+                { icon: "⤢", value: "fit" as const },
+              ].map((item, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCameraView(item.value)}
+                  className={`flex h-11 items-center justify-center rounded-2xl border transition ${
+                    cameraView === item.value
+                      ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-300"
+                      : "border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-white"
+                  }`}
+                >
+                  <span className="text-sm">{item.icon}</span>
+                </button>
+              ))}
             </div>
 
-            <div className="mt-5">
+            <div className="mt-6">
               <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-                Camera
+                Search
               </div>
-
-              <div className="grid grid-cols-5 gap-2">
-                {[
-                  { icon: "👁", value: "default" as const },
-                  { icon: "↑", value: "top" as const },
-                  { icon: "←", value: "left" as const },
-                  { icon: "→", value: "right" as const },
-                  { icon: "⤢", value: "fit" as const },
-                ].map((item, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setCameraView(item.value)}
-                    className={`flex h-11 items-center justify-center rounded-2xl border transition ${
-                      cameraView === item.value
-                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-300"
-                        : "border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-white"
-                    }`}
-                  >
-                    <span className="text-sm">{item.icon}</span>
-                  </button>
-                ))}
-              </div>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search assets, floors, zones..."
+                className="w-full rounded-2xl border border-white/10 bg-[#09162a] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
+              />
             </div>
           </div>
         </div>
