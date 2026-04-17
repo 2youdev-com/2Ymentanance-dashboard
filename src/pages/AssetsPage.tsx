@@ -11,7 +11,6 @@ import {
   Loader2,
   AlertCircle,
   Download,
-  ChevronDown,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -44,13 +43,12 @@ const ASSET_TYPES = [
 const formatType = (t: string) => t.replace(/_/g, ' ')
 
 function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0
     return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
   })
 }
 
-// ── Site structure config ─────────────────────────────────────────────────────
 type SiteStructure = {
   buildings: string[]
   floors: Record<string, string[]>
@@ -79,8 +77,8 @@ function generateZonesForFloors(floorCount = 15) {
     'Basement 2': ['Pump Room', 'Storage', 'Electrical Room'],
     'Basement 1': ['Generator Room', 'Mechanical Room', 'Electrical Room'],
     'Ground Floor': ['Lobby', 'Reception', 'Security', 'Retail Area'],
-    'Rooftop': ['Mechanical Area', 'Cooling Tower Area', 'Service Area'],
-    '__default__': ['Zone A', 'Zone B', 'Zone C', 'MEP Core', 'Service Area'],
+    Rooftop: ['Mechanical Area', 'Cooling Tower Area', 'Service Area'],
+    __default__: ['Zone A', 'Zone B', 'Zone C', 'MEP Core', 'Service Area'],
   }
 
   for (let i = 1; i <= floorCount; i++) {
@@ -126,105 +124,6 @@ function getZones(structure: ReturnType<typeof getSiteStructure>, floor: string)
   return structure.zones[floor] ?? structure.zones['__default__'] ?? []
 }
 
-// ── Combobox / Creatable Select ───────────────────────────────────────────────
-function CreatableSelect({
-  value,
-  onChange,
-  options,
-  placeholder,
-  disabled,
-}: {
-  value: string
-  onChange: (v: string) => void
-  options: string[]
-  placeholder?: string
-  disabled?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const [inputVal, setInputVal] = useState(value)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    setInputVal(value)
-  }, [value])
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const normalizedInput = inputVal.trim().toLowerCase()
-  const normalizedValue = value.trim().toLowerCase()
-  const filtered =
-    !normalizedInput || normalizedInput === normalizedValue
-      ? options
-      : options.filter(o => o.toLowerCase().includes(normalizedInput))
-  return (
-    <div ref={ref} className="relative">
-      <div className="relative">
-        <Input
-          value={inputVal}
-          onChange={e => {
-            setInputVal(e.target.value)
-            onChange(e.target.value)
-            setOpen(true)
-          }}
-          onFocus={() => setOpen(true)}
-          placeholder={placeholder}
-          disabled={disabled}
-          className="pr-8"
-        />
-        <button
-          type="button"
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          onClick={() => setOpen(o => !o)}
-          disabled={disabled}
-        >
-          <ChevronDown className="h-4 w-4" />
-        </button>
-      </div>
-
-      {open && options.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-[300] mt-1 w-full rounded-md border border-border bg-background opacity-100 shadow-xl max-h-52 overflow-y-auto">
-          {filtered.length === 0 && inputVal ? (
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
-              onMouseDown={() => {
-                onChange(inputVal)
-                setOpen(false)
-              }}
-            >
-              Use "{inputVal}"
-            </button>
-          ) : (
-            filtered.map(opt => (
-              <button
-                key={opt}
-                type="button"
-                className={`w-full px-3 py-2 text-left text-sm hover:bg-accent ${
-                  value === opt ? 'bg-accent font-medium' : ''
-                }`}
-                onMouseDown={() => {
-                  onChange(opt)
-                  setInputVal(opt)
-                  setOpen(false)
-                }}
-              >
-                {opt}
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Import Modal ──────────────────────────────────────────────────────────────
 function ImportModal({
   onClose,
   onSuccess,
@@ -288,7 +187,7 @@ function ImportModal({
       'Trane RTAC 400',
       'SN-001',
       'AST-001',
-      'Tower A',
+      'Bank Tower',
       'Floor 1',
       'Zone A',
       'OPERATIONAL',
@@ -500,7 +399,6 @@ function ImportModal({
   )
 }
 
-// ── New Asset Modal ───────────────────────────────────────────────────────────
 interface AssetForm {
   qrUuid: string
   type: string
@@ -562,68 +460,40 @@ function NewAssetModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
   useEffect(() => {
     api
       .get('/sites')
-      .then(r => {
-        setSites(r.data.data)
-        if (r.data.data.length > 0) {
-          const first = r.data.data[0]
-          const structure = getSiteStructure(first.name)
-          const firstBuilding = structure?.buildings[0] ?? ''
-          const firstFloor = structure?.floors[firstBuilding]?.[0] ?? ''
-          const firstZone = getZones(structure, firstFloor)[0] ?? ''
-
-          setForm(f => ({
-            ...f,
-            siteId: first.id,
-            building: firstBuilding,
-            floor: firstFloor,
-            zone: firstZone,
-          }))
-        }
-      })
+      .then(r => setSites(r.data.data))
       .catch(() => {})
   }, [])
 
   const selectedSiteName = sites.find(s => s.id === form.siteId)?.name ?? ''
   const structure = getSiteStructure(selectedSiteName)
-  const buildings = structure?.buildings ?? []
-  const floors = structure?.floors[form.building] ?? []
-  const zones = getZones(structure, form.floor)
+  const buildings = form.siteId ? structure?.buildings ?? [] : []
+  const floors = form.siteId && form.building ? structure?.floors[form.building] ?? [] : []
+  const zones = form.siteId && form.floor ? getZones(structure, form.floor) : []
 
   const handleSiteChange = (siteId: string) => {
-    const site = sites.find(s => s.id === siteId)
-    const st = site ? getSiteStructure(site.name) : SITE_STRUCTURE['Default Site']
-    const firstBuilding = st?.buildings[0] ?? ''
-    const firstFloor = st?.floors[firstBuilding]?.[0] ?? ''
-    const firstZone = getZones(st, firstFloor)[0] ?? ''
-
     setForm(f => ({
       ...f,
       siteId,
-      building: firstBuilding,
-      floor: firstFloor,
-      zone: firstZone,
+      building: '',
+      floor: '',
+      zone: '',
     }))
   }
 
   const handleBuildingChange = (building: string) => {
-    const st = getSiteStructure(selectedSiteName)
-    const firstFloor = st?.floors[building]?.[0] ?? ''
-    const firstZone = getZones(st, firstFloor)[0] ?? ''
-
     setForm(f => ({
       ...f,
       building,
-      floor: firstFloor,
-      zone: firstZone,
+      floor: '',
+      zone: '',
     }))
   }
 
   const handleFloorChange = (floor: string) => {
-    const nextZones = getZones(structure, floor)
     setForm(f => ({
       ...f,
       floor,
-      zone: nextZones[0] ?? '',
+      zone: '',
     }))
   }
 
@@ -636,6 +506,21 @@ function NewAssetModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
 
     if (!form.siteId) {
       setError('Please select a site.')
+      return
+    }
+
+    if (!form.building) {
+      setError('Please select a building.')
+      return
+    }
+
+    if (!form.floor) {
+      setError('Please select a floor.')
+      return
+    }
+
+    if (!form.zone) {
+      setError('Please select a zone.')
       return
     }
 
@@ -769,49 +654,69 @@ function NewAssetModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
 
             <div className="col-span-2">
               <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Location</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Location
+                </p>
 
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <label className="text-sm font-medium">Building</label>
-                    {buildings.length > 0 ? (
-                      <CreatableSelect
-                        value={form.building}
-                        onChange={handleBuildingChange}
-                        options={buildings}
-                        placeholder="Select building"
-                      />
-                    ) : (
-                      <Input value={form.building} onChange={set('building')} placeholder="e.g. Tower A" />
-                    )}
+                    <Select
+                      value={form.building}
+                      onValueChange={handleBuildingChange}
+                      disabled={!form.siteId || buildings.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select building" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {buildings.map(building => (
+                          <SelectItem key={building} value={building}>
+                            {building}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-sm font-medium">Floor</label>
-                    {floors.length > 0 ? (
-                      <CreatableSelect
-                        value={form.floor}
-                        onChange={handleFloorChange}
-                        options={floors}
-                        placeholder="Select floor"
-                      />
-                    ) : (
-                      <Input value={form.floor} onChange={set('floor')} placeholder="e.g. Floor 3" />
-                    )}
+                    <Select
+                      value={form.floor}
+                      onValueChange={handleFloorChange}
+                      disabled={!form.building || floors.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select floor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {floors.map(floor => (
+                          <SelectItem key={floor} value={floor}>
+                            {floor}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-sm font-medium">Zone</label>
-                    {zones.length > 0 ? (
-                      <CreatableSelect
-                        value={form.zone}
-                        onChange={v => setForm(f => ({ ...f, zone: v }))}
-                        options={zones}
-                        placeholder="Select zone"
-                      />
-                    ) : (
-                      <Input value={form.zone} onChange={set('zone')} placeholder="e.g. Zone A" />
-                    )}
+                    <Select
+                      value={form.zone}
+                      onValueChange={v => setForm(f => ({ ...f, zone: v }))}
+                      disabled={!form.floor || zones.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select zone" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {zones.map(zone => (
+                          <SelectItem key={zone} value={zone}>
+                            {zone}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
@@ -879,8 +784,6 @@ function NewAssetModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
     </div>
   )
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
 
 export default function AssetsPage() {
   const navigate = useNavigate()
