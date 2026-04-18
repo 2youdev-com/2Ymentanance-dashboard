@@ -526,14 +526,33 @@ function NewAssetModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
 
     setSaving(true)
     try {
-      const fd = new FormData()
-      Object.entries(form).forEach(([k, v]) => {
-        if (v) fd.append(k, v)
-      })
-      if (photo) fd.append('photo', photo)
+      // Upload photo directly to Cloudinary (bypasses Vercel 4.5 MB body limit)
+      let photoUrl: string | undefined
+      if (photo) {
+        const signRes = await api.post('/upload/sign', {
+          folder: 'loc/asset-photos',
+          resource_type: 'image',
+        })
+        const { cloud_name, api_key, timestamp, signature, folder } = signRes.data.data
 
-      await api.post('/assets', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        const cloudForm = new FormData()
+        cloudForm.append('file', photo)
+        cloudForm.append('api_key', api_key)
+        cloudForm.append('timestamp', String(timestamp))
+        cloudForm.append('signature', signature)
+        cloudForm.append('folder', folder)
+
+        const uploadRes = await fetch(
+          `https://api.cloudinary.com/v1_1/${cloud_name}/image/upload`,
+          { method: 'POST', body: cloudForm }
+        )
+        const uploadData = await uploadRes.json()
+        photoUrl = uploadData.secure_url
+      }
+
+      await api.post('/assets', {
+        ...Object.fromEntries(Object.entries(form).filter(([, v]) => v)),
+        ...(photoUrl ? { photoUrl } : {}),
       })
 
       onSuccess()
