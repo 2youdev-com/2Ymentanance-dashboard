@@ -92,6 +92,7 @@ export default function MaintenancePage() {
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Technician</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Date</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Verification</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Report</th>
                 </tr>
               </thead>
@@ -119,6 +120,23 @@ export default function MaintenancePage() {
                       <Badge variant={log.status === 'COMPLETED' ? 'success' : 'warning'}>
                         {log.status === 'COMPLETED' ? 'Completed' : 'In Progress'}
                       </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        {log.technicianVerification && (
+                          <Badge variant={log.technicianVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
+                            Face: {log.technicianVerification.status}
+                          </Badge>
+                        )}
+                        {log.assetVerification && (
+                          <Badge variant={log.assetVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
+                            Asset: {log.assetVerification.status}
+                          </Badge>
+                        )}
+                        {!log.technicianVerification && !log.assetVerification && (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       {log.problemReport ? (

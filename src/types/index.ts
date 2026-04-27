@@ -94,6 +94,8 @@ export interface MaintenanceLog {
   checklistItems?: ChecklistItem[]
   machinePhotos?: MachinePhoto[]
   problemReport?: ProblemReport
+  technicianVerification?: any
+  assetVerification?: any
   _count?: { checklistItems: number; machinePhotos: number }
 }
 

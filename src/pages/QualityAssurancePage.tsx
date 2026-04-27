@@ -99,14 +99,16 @@ export default function QualityAssurancePage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    {['Asset', 'Type', 'Technician', 'Date', 'Checklist Items', 'Result'].map((h) => (
+                    {['Asset', 'Type', 'Technician', 'Date', 'Checklist Items', 'Verification', 'Result'].map((h) => (
                       <th key={h} className="px-4 py-3 text-left font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
+                  {logs.map((log) => {
+                    const verificationFailed = log.technicianVerification?.status === 'FAILED' || log.assetVerification?.status === 'FAILED';
+                    return (
+                    <tr key={log.id} className={`transition-colors ${verificationFailed ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/30'}`}>
                       <td className="px-4 py-3">
                         <p className="font-medium">{log.asset.name}</p>
                         <p className="text-xs text-muted-foreground">{log.asset.site.name}</p>
@@ -124,9 +126,27 @@ export default function QualityAssurancePage() {
                         {log._count?.checklistItems ?? 0}
                       </td>
                       <td className="px-4 py-3">
-                        {log.problemReport ? (
+                        <div className="flex flex-col gap-1">
+                          {log.technicianVerification && (
+                            <Badge variant={log.technicianVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
+                              Face: {log.technicianVerification.status}
+                            </Badge>
+                          )}
+                          {log.assetVerification && (
+                            <Badge variant={log.assetVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
+                              Asset: {log.assetVerification.status}
+                            </Badge>
+                          )}
+                          {!log.technicianVerification && !log.assetVerification && (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.problemReport || log.technicianVerification?.status === 'FAILED' || log.assetVerification?.status === 'FAILED' ? (
                           <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
-                            <XCircle className="h-4 w-4" /> Issues Found
+                            <XCircle className="h-4 w-4" /> 
+                            {log.problemReport ? 'Issues Found' : 'Verification Failed'}
                           </span>
                         ) : (
                           <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
@@ -135,7 +155,8 @@ export default function QualityAssurancePage() {
                         )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}
