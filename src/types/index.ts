@@ -1,6 +1,22 @@
 export type Role = 'TECHNICIAN' | 'VIEWER' | 'ADMIN'
 export type AssetStatus = 'OPERATIONAL' | 'NEEDS_MAINTENANCE' | 'OUT_OF_SERVICE'
+export type AssetType =
+  | 'CHILLER'
+  | 'AHU'
+  | 'ELEVATOR'
+  | 'ELECTRICAL_PANEL'
+  | 'GENERATOR'
+  | 'FIRE_PUMP'
+  | 'FCU'
+  | 'UPS'
+  | 'PRECISION_COOLING'
+  | 'COOLING_TOWER'
+  | 'AUTO_TRANSFER_SWITCH'
+  | 'FIRE_SUPPRESSION'
+  | 'POWER_DISTRIBUTION'
+  | 'OTHER'
 export type MaintenanceType = 'PREVENTIVE' | 'CORRECTIVE'
+export type MaintenanceStatus = 'IN_PROGRESS' | 'COMPLETED'
 export type ChecklistResult = 'PASS' | 'FAIL' | 'NA'
 export type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 export type ProblemCategory =
@@ -26,7 +42,7 @@ export interface User {
 export interface Asset {
   id: string
   qrUuid: string
-  type: string
+  type: AssetType
   name: string
   model: string
   serialNumber: string
@@ -85,7 +101,7 @@ export interface ProblemReport {
 export interface MaintenanceLog {
   id: string
   type: MaintenanceType
-  status: string
+  status: MaintenanceStatus
   startedAt: string
   completedAt?: string
   personPhoto?: string
@@ -94,8 +110,23 @@ export interface MaintenanceLog {
   checklistItems?: ChecklistItem[]
   machinePhotos?: MachinePhoto[]
   problemReport?: ProblemReport
-  technicianVerification?: any
-  assetVerification?: any
+  technicianVerification?: {
+    livenessPassed: boolean
+    faceMatched: boolean
+    similarity: number
+    status: 'PASSED' | 'FAILED' | 'NEEDS_MANUAL_REVIEW' | 'NOT_CONFIGURED'
+    videoUrl?: string
+  }
+  assetVerification?: {
+    qrMatch: boolean
+    serialNumberMatch: boolean
+    assetNumberMatch: boolean
+    assetTypeMatch: boolean
+    visualMatch: boolean
+    confidence: number
+    status: 'PASSED' | 'FAILED' | 'NEEDS_MANUAL_REVIEW' | 'NOT_CONFIGURED'
+    videoUrl?: string
+  }
   _count?: { checklistItems: number; machinePhotos: number }
 }
 

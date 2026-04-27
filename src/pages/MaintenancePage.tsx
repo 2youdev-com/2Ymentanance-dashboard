@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { SeverityBadge } from '@/components/ui/status-badge'
+import { SeverityBadge, VerificationBadge } from '@/components/ui/status-badge'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/spinner'
 import { useSiteStore } from '@/store'
@@ -20,6 +20,7 @@ export default function MaintenancePage() {
   const [pagination, setPagination] = useState<Pagination | null>(null)
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [page, setPage] = useState(1)
@@ -30,20 +31,21 @@ export default function MaintenancePage() {
       const params: Record<string, string | number> = { page, limit: 20 }
       if (selectedSiteId) params.siteId = selectedSiteId
       if (typeFilter !== 'all') params.type = typeFilter
+      if (statusFilter !== 'all') params.status = statusFilter
       if (dateFrom) params.dateFrom = dateFrom
       if (dateTo) params.dateTo = dateTo
 
       const res = await api.get('/maintenance', { params })
-      setLogs(res.data.data)
+      setLogs(res.data.data ?? [])
       setPagination(res.data.pagination)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [selectedSiteId, typeFilter, dateFrom, dateTo, page])
+  }, [selectedSiteId, typeFilter, statusFilter, dateFrom, dateTo, page])
 
-  useEffect(() => { setPage(1) }, [selectedSiteId, typeFilter, dateFrom, dateTo])
+  useEffect(() => { setPage(1) }, [selectedSiteId, typeFilter, statusFilter, dateFrom, dateTo])
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
   return (
@@ -65,6 +67,17 @@ export default function MaintenancePage() {
               <SelectItem value="all">All types</SelectItem>
               <SelectItem value="PREVENTIVE">Preventive</SelectItem>
               <SelectItem value="CORRECTIVE">Corrective</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+              <SelectItem value="COMPLETED">Completed</SelectItem>
             </SelectContent>
           </Select>
 
@@ -124,14 +137,10 @@ export default function MaintenancePage() {
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
                         {log.technicianVerification && (
-                          <Badge variant={log.technicianVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
-                            Face: {log.technicianVerification.status}
-                          </Badge>
+                          <VerificationBadge status={log.technicianVerification.status} />
                         )}
                         {log.assetVerification && (
-                          <Badge variant={log.assetVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
-                            Asset: {log.assetVerification.status}
-                          </Badge>
+                          <VerificationBadge status={log.assetVerification.status} />
                         )}
                         {!log.technicianVerification && !log.assetVerification && (
                           <span className="text-xs text-muted-foreground">—</span>

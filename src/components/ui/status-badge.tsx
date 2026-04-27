@@ -31,3 +31,14 @@ export function ResultBadge({ result }: { result: 'PASS' | 'FAIL' | 'NA' }) {
   const { variant, label } = map[result]
   return <Badge variant={variant}>{label}</Badge>
 }
+
+export function VerificationBadge({ status }: { status: string }) {
+  const map: Record<string, { variant: any; label: string }> = {
+    PASSED: { variant: 'success', label: 'Passed' },
+    FAILED: { variant: 'danger', label: 'Failed' },
+    NEEDS_MANUAL_REVIEW: { variant: 'warning', label: 'Review' },
+    NOT_CONFIGURED: { variant: 'secondary', label: 'Skipped' },
+  }
+  const config = map[status] || { variant: 'secondary', label: status }
+  return <Badge variant={config.variant}>{config.label}</Badge>
+}

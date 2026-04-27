@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ShieldCheck, ChevronLeft, ChevronRight, CheckCircle, XCircle, MinusCircle } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/spinner'
+import { VerificationBadge } from '@/components/ui/status-badge'
 import { useSiteStore } from '@/store'
 import { MaintenanceLog, Pagination } from '@/types'
 import api from '@/lib/api'
@@ -39,10 +40,22 @@ export default function QualityAssurancePage() {
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
   // Compute QA stats
+  // totalChecks: sum of all checklist items across the current page
   const totalChecks = logs.reduce((acc, l) => acc + (l._count?.checklistItems ?? 0), 0)
-  const passRate = logs.length > 0
-    ? Math.round(logs.filter((l) => !l.problemReport).length / logs.length * 100)
-    : 0
+
+  // passRate: percentage of COMPLETED logs that have no problem report
+  // and no failed verifications — a true "all-clear" completion rate
+  const completedLogs = logs.filter((l) => l.status === 'COMPLETED')
+  const cleanLogs = completedLogs.filter(
+    (l) =>
+      !l.problemReport &&
+      l.technicianVerification?.status !== 'FAILED' &&
+      l.assetVerification?.status !== 'FAILED',
+  )
+  const passRate =
+    completedLogs.length > 0
+      ? Math.round((cleanLogs.length / completedLogs.length) * 100)
+      : 0
 
   return (
     <div>
@@ -106,56 +119,60 @@ export default function QualityAssurancePage() {
                 </thead>
                 <tbody className="divide-y">
                   {logs.map((log) => {
-                    const verificationFailed = log.technicianVerification?.status === 'FAILED' || log.assetVerification?.status === 'FAILED';
+                    const verificationFailed =
+                      log.technicianVerification?.status === 'FAILED' ||
+                      log.assetVerification?.status === 'FAILED'
+                    const hasIssue = !!log.problemReport || verificationFailed
                     return (
-                    <tr key={log.id} className={`transition-colors ${verificationFailed ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/30'}`}>
-                      <td className="px-4 py-3">
-                        <p className="font-medium">{log.asset.name}</p>
-                        <p className="text-xs text-muted-foreground">{log.asset.site.name}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={log.type === 'PREVENTIVE' ? 'secondary' : 'warning'}>
-                          {log.type === 'PREVENTIVE' ? 'Preventive' : 'Corrective'}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{log.technician.fullName}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
-                        {format(new Date(log.startedAt), 'dd MMM yyyy')}
-                      </td>
-                      <td className="px-4 py-3 text-center font-medium">
-                        {log._count?.checklistItems ?? 0}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1">
-                          {log.technicianVerification && (
-                            <Badge variant={log.technicianVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
-                              Face: {log.technicianVerification.status}
-                            </Badge>
+                      <tr
+                        key={log.id}
+                        className={`transition-colors ${hasIssue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/30'}`}
+                      >
+                        <td className="px-4 py-3">
+                          <p className="font-medium">{log.asset.name}</p>
+                          <p className="text-xs text-muted-foreground">{log.asset.site.name}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant={log.type === 'PREVENTIVE' ? 'secondary' : 'warning'}>
+                            {log.type === 'PREVENTIVE' ? 'Preventive' : 'Corrective'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{log.technician.fullName}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          {format(new Date(log.startedAt), 'dd MMM yyyy')}
+                        </td>
+                        <td className="px-4 py-3 text-center font-medium">
+                          {log._count?.checklistItems ?? 0}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-1">
+                            {log.technicianVerification ? (
+                              <VerificationBadge status={log.technicianVerification.status} />
+                            ) : null}
+                            {log.assetVerification ? (
+                              <VerificationBadge status={log.assetVerification.status} />
+                            ) : null}
+                            {!log.technicianVerification && !log.assetVerification && (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {hasIssue ? (
+                            <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
+                              <XCircle className="h-4 w-4" />
+                              {log.problemReport ? 'Issues Found' : 'Verification Failed'}
+                            </span>
+                          ) : log.status === 'COMPLETED' ? (
+                            <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                              <CheckCircle className="h-4 w-4" /> Passed
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">In Progress</span>
                           )}
-                          {log.assetVerification && (
-                            <Badge variant={log.assetVerification.status === 'PASSED' ? 'success' : 'destructive'} className="text-[10px] py-0">
-                              Asset: {log.assetVerification.status}
-                            </Badge>
-                          )}
-                          {!log.technicianVerification && !log.assetVerification && (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {log.problemReport || log.technicianVerification?.status === 'FAILED' || log.assetVerification?.status === 'FAILED' ? (
-                          <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
-                            <XCircle className="h-4 w-4" /> 
-                            {log.problemReport ? 'Issues Found' : 'Verification Failed'}
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                            <CheckCircle className="h-4 w-4" /> Passed
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                    );
+                        </td>
+                      </tr>
+                    )
                   })}
                 </tbody>
               </table>

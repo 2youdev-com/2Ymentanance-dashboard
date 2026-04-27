@@ -6,8 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/spinner'
 import { useSiteStore } from '@/store'
+import { ActivityEvent, Pagination } from '@/types'
 import api from '@/lib/api'
 import { format } from 'date-fns'
+
+const PAGE_SIZE = 30
 
 const typeColor: Record<string, string> = {
   MAINTENANCE_STARTED: 'bg-blue-100 text-blue-800',
@@ -25,35 +28,32 @@ const typeLabel: Record<string, string> = {
 
 export default function AuditLogsPage() {
   const { selectedSiteId } = useSiteStore()
-  const [events, setEvents] = useState<any[]>([])
+  const [events, setEvents] = useState<ActivityEvent[]>([])
+  const [pagination, setPagination] = useState<Pagination | null>(null)
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [typeFilter, setTypeFilter] = useState('all')
   const [page, setPage] = useState(1)
-  const PAGE_SIZE = 30
 
   const fetchEvents = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
+      const params: Record<string, string | number> = { page, limit: PAGE_SIZE }
       if (selectedSiteId) params.siteId = selectedSiteId
+      if (typeFilter !== 'all') params.type = typeFilter
 
       const res = await api.get('/activity', { params })
       setEvents(res.data.data ?? [])
+      setPagination(res.data.pagination ?? null)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [selectedSiteId])
+  }, [selectedSiteId, typeFilter, page])
 
-  useEffect(() => {
-    setPage(1)
-  }, [selectedSiteId, typeFilter])
-
-  useEffect(() => {
-    fetchEvents()
-  }, [fetchEvents])
+  useEffect(() => { setPage(1) }, [selectedSiteId, typeFilter])
+  useEffect(() => { fetchEvents() }, [fetchEvents])
 
   const handleExport = async () => {
     setExporting(true)
@@ -78,42 +78,26 @@ export default function AuditLogsPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch (err: any) {
-      console.error('EXPORT ERROR FULL:', err)
-      console.error('EXPORT STATUS:', err?.response?.status)
-      console.error('EXPORT HEADERS:', err?.response?.headers)
-      console.error('EXPORT DATA:', err?.response?.data)
-
       let message = 'Export failed'
-
-      if (err?.response?.status === 401) {
-        message = '401 Unauthorized - login again'
-      } else if (err?.response?.status === 403) {
-        message = '403 Forbidden - you do not have permission'
-      } else if (err?.response?.status === 404) {
-        message = '404 Not Found - export route not found'
-      } else if (err?.response?.status === 500) {
-        message = '500 Internal Server Error - backend export crashed'
-      } else if (err?.message) {
-        message = err.message
-      }
-
+      if (err?.response?.status === 401) message = 'Unauthorized — please log in again'
+      else if (err?.response?.status === 403) message = 'Forbidden — you do not have permission'
+      else if (err?.response?.status === 404) message = 'Export route not found'
+      else if (err?.response?.status === 500) message = 'Server error during export'
+      else if (err?.message) message = err.message
       alert(message)
     } finally {
       setExporting(false)
     }
   }
 
-  const filtered =
-    typeFilter === 'all' ? events : events.filter((e) => e.type === typeFilter)
-
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const totalPages = pagination?.pages ?? 1
+  const totalCount = pagination?.total ?? events.length
 
   return (
     <div>
       <PageHeader
         title="Audit Logs"
-        description={`${filtered.length} total log entries`}
+        description={`${totalCount} total log entries`}
         breadcrumbs={[{ label: 'Audit Logs' }]}
         actions={
           <div className="flex gap-2">
@@ -154,7 +138,7 @@ export default function AuditLogsPage() {
           <CardContent className="p-0">
             {loading ? (
               <PageLoader />
-            ) : paged.length === 0 ? (
+            ) : events.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16">
                 <FileText className="h-10 w-10 text-muted-foreground/30" />
                 <p className="text-sm text-muted-foreground">No audit logs found</p>
@@ -175,7 +159,7 @@ export default function AuditLogsPage() {
                 </thead>
 
                 <tbody className="divide-y font-mono">
-                  {paged.map((event) => (
+                  {events.map((event) => (
                     <tr key={event.id} className="transition-colors hover:bg-muted/20">
                       <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
                         <p>{format(new Date(event.timestamp), 'dd MMM yyyy')}</p>
@@ -220,8 +204,8 @@ export default function AuditLogsPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <span>
-              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of{' '}
-              {filtered.length}
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)} of{' '}
+              {totalCount}
             </span>
 
             <div className="flex items-center gap-2">

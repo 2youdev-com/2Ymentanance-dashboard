@@ -15,7 +15,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { StatusBadge, SeverityBadge, ResultBadge } from '@/components/ui/status-badge'
+import { StatusBadge, SeverityBadge, ResultBadge, VerificationBadge } from '@/components/ui/status-badge'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/spinner'
 import { Asset, MaintenanceLog } from '@/types'
@@ -233,6 +233,16 @@ export default function AssetDetailPage() {
                                     : 'Corrective'}{' '}
                                   Maintenance
                                 </span>
+                                {log.technicianVerification && (
+                                  <VerificationBadge
+                                    status={log.technicianVerification.status}
+                                  />
+                                )}
+                                {log.assetVerification && (
+                                  <VerificationBadge
+                                    status={log.assetVerification.status}
+                                  />
+                                )}
                                 {log.problemReport && (
                                   <SeverityBadge severity={log.problemReport.severity} />
                                 )}
@@ -307,21 +317,124 @@ export default function AssetDetailPage() {
                             )}
 
                             {log.personPhoto && (
-                              <div>
-                                <p className="mb-2 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                                  <User className="h-3 w-3" /> Technician Selfie
-                                </p>
-                                <a
-                                  href={log.personPhoto}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  <img
-                                    src={log.personPhoto}
-                                    alt="technician"
-                                    className="h-20 w-20 rounded border object-cover transition-opacity hover:opacity-80"
-                                  />
-                                </a>
+                              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                <div>
+                                  <p className="mb-2 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                                    <User className="h-3 w-3" /> Technician Selfie
+                                  </p>
+                                  <a
+                                    href={log.personPhoto}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <img
+                                      src={log.personPhoto}
+                                      alt="technician"
+                                      className="h-24 w-24 rounded border object-cover transition-opacity hover:opacity-80"
+                                    />
+                                  </a>
+                                </div>
+
+                                {log.technicianVerification && (
+                                  <div>
+                                    <div className="mb-2 flex items-center gap-2">
+                                      <p className="text-xs font-medium text-muted-foreground">
+                                        Identity Verification
+                                      </p>
+                                      <VerificationBadge
+                                        status={log.technicianVerification.status}
+                                      />
+                                    </div>
+                                    {log.technicianVerification.videoUrl && (
+                                      <ReactPlayer
+                                        url={log.technicianVerification.videoUrl}
+                                        controls
+                                        width="100%"
+                                        height="120px"
+                                        style={{ borderRadius: 6, overflow: 'hidden' }}
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {log.assetVerification && (
+                              <div className="rounded-md border bg-muted/30 p-3">
+                                <div className="mb-3 flex items-center justify-between">
+                                  <p className="text-xs font-medium text-muted-foreground">
+                                    Asset Verification
+                                  </p>
+                                  <VerificationBadge status={log.assetVerification.status} />
+                                </div>
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                  {log.assetVerification.videoUrl && (
+                                    <ReactPlayer
+                                      url={log.assetVerification.videoUrl}
+                                      controls
+                                      width="100%"
+                                      height="120px"
+                                      style={{ borderRadius: 6, overflow: 'hidden' }}
+                                    />
+                                  )}
+                                  <div className="space-y-1 text-[11px]">
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">QR Match</span>
+                                      <span
+                                        className={
+                                          log.assetVerification.qrMatch
+                                            ? 'text-green-600'
+                                            : 'text-red-600'
+                                        }
+                                      >
+                                        {log.assetVerification.qrMatch ? 'Yes' : 'No'}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">
+                                        Serial Match
+                                      </span>
+                                      <span
+                                        className={
+                                          log.assetVerification.serialNumberMatch
+                                            ? 'text-green-600'
+                                            : 'text-red-600'
+                                        }
+                                      >
+                                        {log.assetVerification.serialNumberMatch
+                                          ? 'Yes'
+                                          : 'No'}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">
+                                        Asset # Match
+                                      </span>
+                                      <span
+                                        className={
+                                          log.assetVerification.assetNumberMatch
+                                            ? 'text-green-600'
+                                            : 'text-red-600'
+                                        }
+                                      >
+                                        {log.assetVerification.assetNumberMatch
+                                          ? 'Yes'
+                                          : 'No'}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">
+                                        Confidence
+                                      </span>
+                                      <span className="font-medium">
+                                        {(log.assetVerification.confidence * 100).toFixed(
+                                          0
+                                        )}
+                                        %
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             )}
 
