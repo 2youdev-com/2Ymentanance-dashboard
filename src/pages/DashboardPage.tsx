@@ -140,14 +140,43 @@ export default function DashboardPage() {
     day: i,
   }))
 
-  const ppeChecks = { total: 27, compliant: 1, nonCompliant: 26 }
-  const ppeRate = Math.round((ppeChecks.compliant / ppeChecks.total) * 100)
+  // Verification stats derived from real maintenance data
+  // technicianVerification & assetVerification are stored as JSON on each log
+  const allLogs = assets.flatMap((a) => a.maintenanceLogs ?? []) as Array<{
+    technicianVerification?: { status: string } | null
+    assetVerification?: { status: string } | null
+  }>
 
-  const topIssues = [
-    { label: 'Safety glasses: Not detected', count: 12 },
-    { label: 'Safety vest: Not detected', count: 9 },
-    { label: 'Hard hat: Not detected', count: 5 },
-  ]
+  const techVerified = allLogs.filter(
+    (l) => l.technicianVerification?.status === 'PASSED'
+  ).length
+  const techFailed = allLogs.filter(
+    (l) => l.technicianVerification?.status === 'FAILED'
+  ).length
+  const techReview = allLogs.filter(
+    (l) => l.technicianVerification?.status === 'NEEDS_MANUAL_REVIEW'
+  ).length
+  const techTotal = techVerified + techFailed + techReview
+
+  const assetVerified = allLogs.filter(
+    (l) => l.assetVerification?.status === 'PASSED'
+  ).length
+  const assetFailed = allLogs.filter(
+    (l) => l.assetVerification?.status === 'FAILED'
+  ).length
+
+  const verificationTotal = techTotal
+  const verificationPassed = techVerified
+  const verificationRate =
+    verificationTotal > 0
+      ? Math.round((verificationPassed / verificationTotal) * 100)
+      : 0
+
+  const verificationIssues = [
+    { label: 'Identity: Failed', count: techFailed },
+    { label: 'Identity: Needs Review', count: techReview },
+    { label: 'Asset: Failed', count: assetFailed },
+  ].filter((i) => i.count > 0)
 
   const completionRate = stats
     ? Math.round(
@@ -417,70 +446,90 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4 text-primary" /> Expert Compliance
+                <ShieldAlert className="h-4 w-4 text-primary" /> Verification Compliance
               </CardTitle>
-              <p className="text-[10px] text-muted-foreground">Photo verification results</p>
+              <p className="text-[10px] text-muted-foreground">Identity &amp; asset verification results</p>
             </CardHeader>
 
             <CardContent>
-              <div className="flex items-center gap-4 mb-4">
-                <div className="relative flex items-center justify-center">
-                  <PieChart width={80} height={80}>
-                    <Pie
-                      data={[
-                        { value: ppeChecks.compliant, color: '#22c55e' },
-                        { value: ppeChecks.nonCompliant, color: '#374151' },
-                      ]}
-                      cx={35}
-                      cy={35}
-                      innerRadius={24}
-                      outerRadius={36}
-                      dataKey="value"
-                      strokeWidth={0}
-                      startAngle={90}
-                      endAngle={-270}
-                    >
-                      <Cell fill="#22c55e" />
-                      <Cell fill="#374151" />
-                    </Pie>
-                  </PieChart>
-
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <span className="text-sm font-bold">{ppeRate}%</span>
-                  </div>
+              {verificationTotal === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <ShieldAlert className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                  <p className="text-xs text-muted-foreground">No verification data yet</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">
+                    Data appears after technicians complete maintenance with video verification
+                  </p>
                 </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="relative flex items-center justify-center">
+                      <PieChart width={80} height={80}>
+                        <Pie
+                          data={[
+                            { value: verificationPassed },
+                            { value: verificationTotal - verificationPassed },
+                          ]}
+                          cx={35}
+                          cy={35}
+                          innerRadius={24}
+                          outerRadius={36}
+                          dataKey="value"
+                          strokeWidth={0}
+                          startAngle={90}
+                          endAngle={-270}
+                        >
+                          <Cell fill="#22c55e" />
+                          <Cell fill="#374151" />
+                        </Pie>
+                      </PieChart>
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span className="text-sm font-bold">{verificationRate}%</span>
+                      </div>
+                    </div>
 
-                <div className="space-y-1 text-xs">
-                  <div>
-                    <p className="text-muted-foreground">Total Checks</p>
-                    <p className="font-bold text-lg">{ppeChecks.total}</p>
-                  </div>
-                </div>
+                    <div className="space-y-1 text-xs">
+                      <div>
+                        <p className="text-muted-foreground">Total Checks</p>
+                        <p className="font-bold text-lg">{verificationTotal}</p>
+                      </div>
+                    </div>
 
-                <div className="space-y-1 text-xs ml-auto text-right">
-                  <div>
-                    <p className="text-muted-foreground">Compliant</p>
-                    <p className="font-bold text-green-500">{ppeChecks.compliant}</p>
+                    <div className="space-y-1 text-xs ml-auto text-right">
+                      <div>
+                        <p className="text-muted-foreground">Passed</p>
+                        <p className="font-bold text-green-500">{verificationPassed}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Failed / Review</p>
+                        <p className="font-bold text-red-500">
+                          {verificationTotal - verificationPassed}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-muted-foreground">Non-Compliant</p>
-                    <p className="font-bold text-red-500">{ppeChecks.nonCompliant}</p>
-                  </div>
-                </div>
-              </div>
 
-              <p className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase">Top Issues</p>
-
-              <div className="space-y-1.5">
-                {topIssues.map((issue) => (
-                  <div key={issue.label} className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground truncate flex-1 mr-2">{issue.label}</p>
-                    <span className="text-[10px] font-bold bg-red-500 text-white rounded px-1.5 py-0.5 flex-shrink-0">
-                      {issue.count}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  {verificationIssues.length > 0 && (
+                    <>
+                      <p className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase">
+                        Issues
+                      </p>
+                      <div className="space-y-1.5">
+                        {verificationIssues.map((issue) => (
+                          <div key={issue.label} className="flex items-center justify-between">
+                            <p className="text-xs text-muted-foreground truncate flex-1 mr-2">
+                              {issue.label}
+                            </p>
+                            <span className="text-[10px] font-bold bg-red-500 text-white rounded px-1.5 py-0.5 flex-shrink-0">
+                              {issue.count}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </div>

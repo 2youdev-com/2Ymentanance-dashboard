@@ -2,9 +2,9 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Map, Bell, Package, Wrench, ShieldCheck,
   ClipboardList, Calendar, Clock, AlertTriangle, Users, QrCode,
-  FileText, LogOut, Building2,
+  FileText, LogOut, Building2, Bot,
 } from 'lucide-react'
-import { useAuthStore, useSiteStore } from '@/store'
+import { useAuthStore, useSiteStore, useChatStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import api from '@/lib/api'
@@ -37,6 +37,12 @@ const navGroups = [
     ],
   },
   {
+    label: 'Intelligence',
+    items: [
+      { to: '/assistant', icon: Bot, label: 'AI Assistant' },
+    ],
+  },
+  {
     label: 'Administration',
     items: [
       { to: '/users', icon: Users, label: 'User Management', adminOnly: true },
@@ -49,22 +55,20 @@ const navGroups = [
 export function Sidebar() {
   const { user, clearAuth } = useAuthStore()
   const { selectedSiteId, setSelectedSite } = useSiteStore()
+  const { clearAllConversations, setOpen } = useChatStore()
   const navigate = useNavigate()
 
   const handleLogout = async () => {
-    try {
-      await api.post('/auth/logout')
-    } catch {
-      // token may already be expired — proceed anyway
-    }
+    try { await api.post('/auth/logout') } catch { /* expired token ok */ }
     disconnectSocket()
+    setOpen(false)
+    clearAllConversations()   // FIX: wipe chat so next user starts fresh
     clearAuth()
     navigate('/login')
   }
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r bg-card overflow-y-auto">
-      {/* Logo */}
       <div className="flex h-16 items-center gap-2 border-b px-6 flex-shrink-0">
         <Building2 className="h-6 w-6 text-primary" />
         <div>
@@ -73,52 +77,34 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Site selector */}
       <div className="border-b p-4 flex-shrink-0">
         <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">Site</p>
         <Select value={selectedSiteId || 'all'} onValueChange={(v) => setSelectedSite(v === 'all' ? null : v)}>
-          <SelectTrigger className="h-9 text-sm">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Sites</SelectItem>
-            {user?.sites.map((s) => (
-              <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-            ))}
+            {user?.sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 p-3 space-y-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(
-            (item: { to: string; icon: React.ComponentType<{ className?: string }>; label: string; adminOnly?: boolean }) =>
-              !item.adminOnly || user?.role === 'ADMIN'
-          )
+          const visibleItems = group.items.filter((item: any) => !item.adminOnly || user?.role === 'ADMIN')
           if (visibleItems.length === 0) return null
           return (
             <div key={group.label}>
-              <p className="px-3 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {group.label}
-              </p>
+              <p className="px-3 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{group.label}</p>
               <div className="space-y-0.5">
-                {visibleItems.map(({ to, icon: Icon, label }) => (
+                {visibleItems.map(({ to, icon: Icon, label }: any) => (
                   <NavLink
-                    key={to}
-                    to={to}
-                    end={to === '/'}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                      )
-                    }
+                    key={to} to={to} end={to === '/'}
+                    className={({ isActive }) => cn(
+                      'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                      isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    )}
                   >
-                    <Icon className="h-4 w-4" />
-                    {label}
+                    <Icon className="h-4 w-4" />{label}
                   </NavLink>
                 ))}
               </div>
@@ -127,7 +113,6 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* User footer */}
       <div className="border-t p-4 flex-shrink-0">
         <div className="mb-3 flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
@@ -138,12 +123,8 @@ export function Sidebar() {
             <p className="text-xs text-muted-foreground">{user?.role}</p>
           </div>
         </div>
-        <button
-          onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        >
-          <LogOut className="h-4 w-4" />
-          Logout
+        <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+          <LogOut className="h-4 w-4" />Logout
         </button>
       </div>
     </aside>

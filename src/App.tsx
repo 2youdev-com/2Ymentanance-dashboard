@@ -15,6 +15,7 @@ import CalendarPage from '@/pages/CalendarPage'
 import SchedulesPage from '@/pages/SchedulesPage'
 import AuditLogsPage from '@/pages/AuditLogsPage'
 import QRCodesPage from '@/pages/QRCodesPage'
+import AiAssistantPage from '@/pages/AIAssistantPage'
 import { useAuthStore } from '@/store'
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
@@ -40,6 +41,8 @@ export default function App() {
           <Route path="work-orders" element={<WorkOrdersPage />} />
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="schedules" element={<SchedulesPage />} />
+          {/* AI Assistant full page */}
+          <Route path="assistant" element={<AiAssistantPage />} />
           <Route path="users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="qr-codes" element={<RequireAdmin><QRCodesPage /></RequireAdmin>} />
           <Route path="audit-logs" element={<RequireAdmin><AuditLogsPage /></RequireAdmin>} />

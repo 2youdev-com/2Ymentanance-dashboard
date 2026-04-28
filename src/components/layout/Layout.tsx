@@ -1,7 +1,9 @@
 import { Outlet, Navigate } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
-import { useAuthStore } from '@/store'
+import { useAuthStore, useChatStore } from '@/store'
 import { useSocket } from '@/hooks/useSocket'
+import { AiFloatingButton } from '@/components/assistant/AiFloatingButton'
+import { AiChatPanel } from '@/components/assistant/AiChatPanel'
 
 export function Layout() {
   const { token } = useAuthStore()
@@ -15,6 +17,10 @@ export function Layout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {/* AI Assistant — floating button + slide-in panel */}
+      <AiFloatingButton />
+      <AiChatPanel />
     </div>
   )
 }
