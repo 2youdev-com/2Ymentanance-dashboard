@@ -142,10 +142,11 @@ function inlineFormat(text: string): React.ReactNode {
 
 // ─── Data table ───────────────────────────────────────────────────────────────
 
-function DataTable({ data }: { data: any }) {
+function DataTable({ data }: { data: unknown }) {
   if (!Array.isArray(data) || data.length === 0) return null
 
-  const keys = Object.keys(data[0] || {}).filter((k) => k !== 'id')
+  const rows = data as Record<string, unknown>[]
+  const keys = Object.keys(rows[0] || {}).filter((k) => k !== 'id')
 
   return (
     <div className="mt-3 overflow-x-auto rounded-xl border border-border">
@@ -164,7 +165,7 @@ function DataTable({ data }: { data: any }) {
         </thead>
 
         <tbody className="divide-y divide-border">
-          {(data as Record<string, unknown>[]).map((row, i) => (
+          {rows.map((row, i) => (
             <tr key={i} className="hover:bg-muted/30 transition-colors">
               {keys.map((k) => (
                 <td key={k} className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
@@ -198,6 +199,8 @@ function formatCell(val: unknown): string {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user'
+  const isError = Boolean(msg.error)
+  const content = String(msg.content ?? '')
 
   return (
     <div className={cn('flex w-full gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>
@@ -212,24 +215,24 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           'max-w-[78%] rounded-2xl px-4 py-3 shadow-sm',
           isUser
             ? 'rounded-tr-sm bg-primary text-primary-foreground'
-            : msg.error
+            : isError
               ? 'rounded-tl-sm bg-destructive/10 border border-destructive/20 text-destructive'
               : 'rounded-tl-sm bg-card border border-border text-foreground'
         )}
       >
         {isUser ? (
           <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-            {msg.content}
+            {content}
           </p>
-        ) : msg.error ? (
+        ) : isError ? (
           <div className="flex items-start gap-2">
             <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <p className="text-sm">{msg.content}</p>
+            <p className="text-sm">{content}</p>
           </div>
         ) : (
           <div className="space-y-0.5 break-words min-w-0">
-            {renderContent(msg.content)}
-            {msg.data && <DataTable data={msg.data as any} />}
+            {renderContent(content)}
+            {msg.data ? <DataTable data={msg.data} /> : null}
           </div>
         )}
 
@@ -345,7 +348,6 @@ export default function AiAssistantPage() {
       timestamp: Date.now(),
     })
 
-    // Build history, excluding the empty placeholder we just added.
     const currentMessages = getMessages(userId)
 
     const history = currentMessages
@@ -353,7 +355,7 @@ export default function AiAssistantPage() {
       .slice(-21, -1)
       .map((m) => ({
         role: m.role,
-        content: m.content,
+        content: String(m.content ?? ''),
       }))
 
     try {
@@ -432,7 +434,7 @@ export default function AiAssistantPage() {
         ) : (
           <>
             {messages.map((msg) =>
-              msg.role === 'assistant' && msg.content === '' ? (
+              msg.role === 'assistant' && String(msg.content ?? '') === '' ? (
                 <TypingIndicator key={msg.id} />
               ) : (
                 <MessageBubble key={msg.id} msg={msg} />

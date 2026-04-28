@@ -142,10 +142,11 @@ function inlineFormat(text: string): React.ReactNode {
 
 // ─── Data table ───────────────────────────────────────────────────────────────
 
-function DataTable({ data }: { data: any }) {
+function DataTable({ data }: { data: unknown }) {
   if (!Array.isArray(data) || data.length === 0) return null
 
-  const keys = Object.keys(data[0] || {}).filter((k) => !['id'].includes(k))
+  const rows = data as Record<string, unknown>[]
+  const keys = Object.keys(rows[0] || {}).filter((k) => k !== 'id')
 
   return (
     <div className="mt-2 overflow-x-auto rounded-lg border border-border">
@@ -164,7 +165,7 @@ function DataTable({ data }: { data: any }) {
         </thead>
 
         <tbody className="divide-y divide-border">
-          {(data as Record<string, unknown>[]).map((row, i) => (
+          {rows.map((row, i) => (
             <tr key={i} className="hover:bg-muted/30 transition-colors">
               {keys.map((k) => (
                 <td key={k} className="whitespace-nowrap px-3 py-2 text-muted-foreground">
@@ -198,7 +199,8 @@ function formatCell(val: unknown): string {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user'
-  const isError = msg.error
+  const isError = Boolean(msg.error)
+  const content = String(msg.content ?? '')
 
   return (
     <div className={cn('flex w-full gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
@@ -220,17 +222,17 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       >
         {isUser ? (
           <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-            {msg.content}
+            {content}
           </p>
         ) : isError ? (
           <div className="flex items-start gap-2">
             <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <p className="text-sm">{msg.content}</p>
+            <p className="text-sm">{content}</p>
           </div>
         ) : (
           <div className="space-y-0.5 break-words">
-            {renderContent(msg.content)}
-            {msg.data && <DataTable data={msg.data as any} />}
+            {renderContent(content)}
+            {msg.data ? <DataTable data={msg.data} /> : null}
           </div>
         )}
 
@@ -351,7 +353,6 @@ export function AiChatPanel() {
 
     addMessage(userId, placeholderMsg)
 
-    // Build conversation history to send.
     const currentMessages = getMessages(userId)
 
     const history = currentMessages
@@ -359,7 +360,7 @@ export function AiChatPanel() {
       .slice(-21, -1)
       .map((m) => ({
         role: m.role,
-        content: m.content,
+        content: String(m.content ?? ''),
       }))
 
     try {
@@ -427,7 +428,6 @@ export function AiChatPanel() {
             : 'translate-y-4 opacity-0 pointer-events-none'
         )}
       >
-        {/* Header */}
         <div className="flex items-center justify-between rounded-t-2xl border-b border-border bg-card px-4 py-3 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
@@ -455,7 +455,6 @@ export function AiChatPanel() {
           </div>
         </div>
 
-        {/* Messages */}
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
@@ -488,7 +487,7 @@ export function AiChatPanel() {
           )}
 
           {messages.map((msg) =>
-            msg.role === 'assistant' && msg.content === '' ? (
+            msg.role === 'assistant' && String(msg.content ?? '') === '' ? (
               <TypingIndicator key={msg.id} />
             ) : (
               <MessageBubble key={msg.id} msg={msg} />
@@ -507,7 +506,6 @@ export function AiChatPanel() {
           </button>
         )}
 
-        {/* Input */}
         <div className="flex-shrink-0 border-t border-border bg-card px-3 py-3 rounded-b-2xl">
           <div className="flex items-end gap-2 rounded-xl border border-border bg-background px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50 transition-all">
             <textarea
