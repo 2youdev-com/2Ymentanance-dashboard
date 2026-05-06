@@ -42,7 +42,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-2xl font-bold">2Ymentanance</h1>
           <p className="text-sm text-muted-foreground">Asset Maintenance System</p>
-          <p className="text-xs text-muted-foreground">Bank Tower & NRR IT Hub — Riyadh, KSA</p>
+          <p className="text-xs text-muted-foreground">--</p>
         </div>
 
         <Card>
