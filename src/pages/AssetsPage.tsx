@@ -152,13 +152,19 @@ function ImportModal({
       .catch(() => {})
   }, [])
 
+  const isZip = (f: File) => f.name.toLowerCase().endsWith('.zip')
+  const isCsv = (f: File) =>
+    f.name.toLowerCase().endsWith('.csv') ||
+    f.name.toLowerCase().endsWith('.xlsx') ||
+    f.name.toLowerCase().endsWith('.xls')
+
   const handleFile = (f: File) => {
-    if (!f.name.endsWith('.xlsx') && !f.name.endsWith('.xls') && !f.name.endsWith('.csv')) {
-      setError('Only Excel (.xlsx, .xls) or CSV files are accepted.')
+    if (!isZip(f) && !isCsv(f)) {
+      setError('Only .zip, .csv, or .xlsx files are accepted.')
       return
     }
-    if (f.size > 5 * 1024 * 1024) {
-      setError('File size must be under 5 MB.')
+    if (f.size > 50 * 1024 * 1024) {
+      setError('File size must be under 50 MB.')
       return
     }
     setError(null)
@@ -198,7 +204,8 @@ function ImportModal({
     ]
     const typeNote = `# Valid types: ${ASSET_TYPES.join(' | ')}`
     const statusNote = '# Valid statuses: OPERATIONAL | NEEDS_MAINTENANCE | OUT_OF_SERVICE'
-    const csv = [typeNote, statusNote, headers.join(','), exampleRow.join(',')].join('\n')
+    const photoNote = '# Photos: put images in a photos/ folder inside the zip, named by serialNumber (e.g. SN-001.jpg)'
+    const csv = [typeNote, statusNote, photoNote, headers.join(','), exampleRow.join(',')].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -210,63 +217,72 @@ function ImportModal({
 
   const handleImport = async () => {
     if (!file) return
-
     setImporting(true)
     setError(null)
     setResult(null)
 
     try {
-      const text = await file.text()
-      const lines = text.split('\n').filter(l => l && !l.startsWith('#'))
-      const [headerLine, ...rows] = lines
-      const headers = headerLine.split(',').map(h => h.trim())
-
-      let created = 0
-      let failed = 0
-      const errors: string[] = []
-
-      for (let i = 0; i < rows.length; i++) {
-        const vals = rows[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''))
-        const row: Record<string, string> = {}
-
-        headers.forEach((h, idx) => {
-          row[h] = vals[idx] ?? ''
+      if (isZip(file)) {
+        // ── ZIP import (with photos) ─────────────────────────────────────
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await api.post('/assets/import-zip', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
         })
+        setResult(res.data.data)
+        if (res.data.data.created > 0) onSuccess()
+      } else {
+        // ── CSV / Excel import (no photos) ───────────────────────────────
+        const text = await file.text()
+        const lines = text.split('\n').filter(l => l && !l.startsWith('#'))
+        const [headerLine, ...rows] = lines
+        const headers = headerLine.split(',').map(h => h.trim())
 
-        if (!row.name || !row.type || !row.siteId) {
-          errors.push(`Row ${i + 2}: missing name, type, or siteId`)
-          failed++
-          continue
+        let created = 0
+        let failed = 0
+        const errors: string[] = []
+
+        for (let i = 0; i < rows.length; i++) {
+          const vals = rows[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''))
+          const row: Record<string, string> = {}
+          headers.forEach((h, idx) => { row[h] = vals[idx] ?? '' })
+
+          if (!row.name || !row.type || !row.siteId) {
+            errors.push(`Row ${i + 2}: missing name, type, or siteId`)
+            failed++
+            continue
+          }
+
+          try {
+            const payload: Record<string, any> = {
+              qrUuid: generateUUID(),
+              name: row.name,
+              type: row.type,
+              model: row.model || 'N/A',
+              serialNumber: row.serialNumber || `SN-${Date.now()}-${i}`,
+              assetNumber: row.assetNumber || `AST-${Date.now()}-${i}`,
+              status: row.status || 'OPERATIONAL',
+              siteId: row.siteId,
+            }
+            if (row.building) payload.building = row.building
+            if (row.floor) payload.floor = row.floor
+            if (row.zone) payload.zone = row.zone
+            if (row.remarks) payload.remarks = row.remarks
+            if (row.lastPreventiveDate) payload.lastPreventiveDate = row.lastPreventiveDate
+            if (row.lastCorrectiveDate) payload.lastCorrectiveDate = row.lastCorrectiveDate
+            await api.post('/assets', payload)
+            created++
+          } catch (e: any) {
+            errors.push(`Row ${i + 2} (${row.name}): ${e?.response?.data?.error ?? 'failed'}`)
+            failed++
+          }
         }
 
-        try {
-          await api.post('/assets', {
-            qrUuid: generateUUID(),
-            name: row.name,
-            type: row.type,
-            model: row.model || 'N/A',
-            serialNumber: row.serialNumber || `SN-${Date.now()}-${i}`,
-            assetNumber: row.assetNumber || `AST-${Date.now()}-${i}`,
-            building: row.building || undefined,
-            floor: row.floor || undefined,
-            zone: row.zone || undefined,
-            status: row.status || 'OPERATIONAL',
-            remarks: row.remarks || undefined,
-            lastPreventiveDate: row.lastPreventiveDate || undefined,
-            lastCorrectiveDate: row.lastCorrectiveDate || undefined,
-            siteId: row.siteId,
-          })
-          created++
-        } catch (e: any) {
-          errors.push(`Row ${i + 2} (${row.name}): ${e?.response?.data?.error ?? 'failed'}`)
-          failed++
-        }
+        setResult({ created, failed, errors })
+        if (created > 0) onSuccess()
       }
-
-      setResult({ created, failed, errors })
-      if (created > 0) onSuccess()
-    } catch {
-      setError('Could not read file. Please use the provided template.')
+    } catch (e: any) {
+      setError(e?.response?.data?.error ?? 'Could not read file. Please use the provided template.')
     } finally {
       setImporting(false)
     }
@@ -283,7 +299,7 @@ function ImportModal({
             <div>
               <h2 className="font-semibold text-base">Bulk Import Assets</h2>
               <p className="text-xs text-muted-foreground">
-                Upload a filled CSV template to create assets at once.
+                Upload a CSV/Excel file, or a ZIP with photos included.
               </p>
             </div>
           </div>
@@ -305,16 +321,29 @@ function ImportModal({
           </div>
         </button>
 
+        {/* ZIP instructions */}
+        <div className="mb-3 rounded-lg bg-muted/50 border border-border p-3 text-xs text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground">📦 To import with photos:</p>
+          <p>1. Fill the CSV template with your assets</p>
+          <p>2. Create a <code className="bg-muted px-1 rounded">photos/</code> folder and put images named by <strong>serialNumber</strong></p>
+          <p className="font-mono text-[11px] bg-muted rounded px-2 py-1">
+            my-import.zip<br/>
+            ├── assets.csv<br/>
+            └── photos/<br/>
+            {'    '}├── SN-001.jpg<br/>
+            {'    '}└── SN-002.png
+          </p>
+          <p>3. Zip both together and upload the .zip</p>
+          <p className="text-xs opacity-70">Without photos: upload the CSV/Excel directly — photos can be added later.</p>
+        </div>
+
         {!result && (
           <div
             className={`rounded-lg border-2 border-dashed p-8 text-center transition-colors cursor-pointer ${
               dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
             }`}
             onClick={() => fileRef.current?.click()}
-            onDragOver={e => {
-              e.preventDefault()
-              setDragOver(true)
-            }}
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
             onDrop={e => {
               e.preventDefault()
@@ -332,7 +361,7 @@ function ImportModal({
                   <span className="text-primary font-medium">Browse</span> or drag and drop
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  CSV or Excel — max 5 MB, 100 rows
+                  .zip (with photos) · .csv · .xlsx — max 50 MB
                 </p>
               </>
             )}
@@ -340,7 +369,7 @@ function ImportModal({
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv,.xlsx,.xls,.zip"
               className="hidden"
               onChange={e => {
                 const f = e.target.files?.[0]
@@ -374,9 +403,7 @@ function ImportModal({
             {result.errors.length > 0 && (
               <div className="max-h-24 overflow-y-auto space-y-1">
                 {result.errors.map((e, i) => (
-                  <p key={i} className="text-xs text-destructive">
-                    {e}
-                  </p>
+                  <p key={i} className="text-xs text-destructive">{e}</p>
                 ))}
               </div>
             )}
@@ -398,7 +425,6 @@ function ImportModal({
     </div>
   )
 }
-
 interface AssetForm {
   qrUuid: string
   type: string
